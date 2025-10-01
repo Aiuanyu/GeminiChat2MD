@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      0.2
+// @version      0.3
 // @description  Downloads a Gemini chat conversation as a Markdown file.
 // @author       You
 // @match        https://gemini.google.com/app/*
@@ -52,7 +52,6 @@
     }
 
     function getSanitizedTitle() {
-        // For /app pages, title is not easily available, use a default from the first prompt.
         if (window.location.pathname.startsWith('/app/')) {
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
@@ -61,7 +60,6 @@
             }
             return 'gemini-chat';
         }
-        // For /share pages
         const titleElement = document.querySelector('h1 strong');
         let title = titleElement ? titleElement.textContent.trim() : 'gemini-chat';
         return title.replace(/[^a-z0-9_ -]/gi, '_').replace(/ /g, '_');
@@ -89,6 +87,11 @@
 
         if (node.classList.contains('file-preview-container')) {
             return parseFilePreview(node);
+        }
+
+        // Exclude the "Export to Sheets" button from tables
+        if (node.classList.contains('table-footer')) {
+            return '';
         }
 
         let childMarkdown = '';
@@ -128,13 +131,12 @@
                             liText += parseNode(liChild, listLevel);
                         }
                     });
-                    // Remove leading/trailing newlines from liText before adding it.
                     liText = liText.replace(/^\s*\n|\n\s*$/g, '');
                     listContent += `\n${indent}${marker} ${liText}${nestedList}`;
                 });
                 return listContent;
             case 'li':
-                return childMarkdown; // Handled by ul/ol logic
+                return childMarkdown;
             case 'hr':
                 return '\n\n---\n\n';
             case 'code':
@@ -165,8 +167,7 @@
         const lang = langElement ? langElement.textContent.trim().toLowerCase() : '';
         const codeElement = codeBlockElement.querySelector('code');
         const code = codeElement ? codeElement.textContent : '';
-        const header = lang ? `\n> **Code Block:** \`${lang}\`\n` : '\n> **Code Block:**\n';
-        return `${header}\n\`\`\`${lang}\n${code.trim()}\n\`\`\`\n\n`;
+        return `\n\n\`\`\`${lang}\n${code.trim()}\n\`\`\`\n\n`;
     }
 
     function parseTable(tableElement) {
