@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      0.3
+// @version      0.4
 // @description  Downloads a Gemini chat conversation as a Markdown file.
 // @author       You
 // @match        https://gemini.google.com/app/*
@@ -89,7 +89,6 @@
             return parseFilePreview(node);
         }
 
-        // Exclude the "Export to Sheets" button from tables
         if (node.classList.contains('table-footer')) {
             return '';
         }
@@ -163,8 +162,8 @@
     }
 
     function parseCodeBlock(codeBlockElement) {
-        const langElement = codeBlockElement.querySelector('.code-block-decoration .gds-title-s');
-        const lang = langElement ? langElement.textContent.trim().toLowerCase() : '';
+        const langElement = codeBlockElement.querySelector('.code-block-decoration > span');
+        const lang = langElement ? langElement.textContent.trim() : '';
         const codeElement = codeBlockElement.querySelector('code');
         const code = codeElement ? codeElement.textContent : '';
         return `\n\n\`\`\`${lang}\n${code.trim()}\n\`\`\`\n\n`;
