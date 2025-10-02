@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      0.4
+// @version      0.5
 // @description  Downloads a Gemini chat conversation as a Markdown file.
 // @author       You
 // @match        https://gemini.google.com/app/*
@@ -196,6 +196,19 @@
             if (titleElement) {
                 markdown += `# ${titleElement.textContent.trim()}\n\n`;
             }
+
+            const shareLinkElement = document.querySelector('.share-link');
+            if (shareLinkElement) {
+                markdown += `**Public Link:** ${shareLinkElement.href}\n\n`;
+            }
+
+            const publishTimeElement = document.querySelector('.publish-time');
+            if (publishTimeElement) {
+                markdown += `**Published:** ${publishTimeElement.textContent.trim()}\n\n`;
+            }
+
+            markdown += '---\n\n';
+
         } else {
              markdown += `# ${getSanitizedTitle()}\n\n`;
         }
