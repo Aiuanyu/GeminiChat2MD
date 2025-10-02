@@ -93,38 +93,49 @@
         const nodes = mainContent.childNodes;
         let inPushBlock = false;
         let textBuffer = '';
-        let currentQuoteLevel = 0; // 0 = not in quote
+        let currentQuoteLevel = 0;
 
         const flushTextBuffer = () => {
             const trimmedBuffer = textBuffer.replace(/[\n\s]+$/, '').replace(/^[\n\s]+/, '');
             if (trimmedBuffer) {
+                 if (currentQuoteLevel > 0) {
+                    markdown += '\n';
+                    currentQuoteLevel = 0;
+                }
                 markdown += trimmedBuffer + '\n\n';
             }
             textBuffer = '';
         };
 
-        const getQuoteInfo = (node) => {
-            const text = node.textContent;
+       const getQuoteInfo = (node) => {
+            let text = node.textContent;
+            let level = 0;
+            let isHeader = false;
+
+            const match = text.match(/^(: ?)+/);
+            const indentStr = match ? match[0] : '';
+            const numColons = (indentStr.match(/:/g) || []).length;
+
+            text = text.substring(indentStr.length);
+
             if (node.matches('.f2')) {
-                const content = text.replace(/^※\s*/, '').trim();
-                return { level: 1, content: `[!quote] ${content}` };
-            }
-            if (node.matches('.f6')) {
-                if (text.startsWith('::')) {
-                    const content = text.replace(/^::\s*/, '').trim();
-                    return { level: 2, content: content };
-                }
-                if (text.startsWith(': ※')) {
-                    const content = text.replace(/^:\s*※\s*/, '').trim();
-                    return { level: 2, content: `[!quote] ${content}` };
-                }
-                if (text.startsWith(':')) {
-                    const content = text.replace(/^:\s*/, '').trim();
-                    return { level: 1, content: content };
+                level = 1;
+                isHeader = true;
+            } else if (node.matches('.f6')) {
+                level = numColons + 1;
+                if (text.trim().startsWith('※')) {
+                    isHeader = true;
                 }
             }
-            return { level: 0, content: '' };
+
+            let content = text.trim();
+            if (isHeader) {
+                content = `[!quote] ${content.replace(/^※\s*/, '').trim()}`;
+            }
+
+            return { level, content };
         };
+
 
         for (const node of nodes) {
             if (node.nodeType === Node.ELEMENT_NODE && node.matches('.article-metaline, .article-metaline-right')) {
@@ -139,17 +150,12 @@
 
                 if (level > 0) {
                     if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
-                        markdown += '> '.repeat(level) + '\n';
+                         markdown += '\n';
                     }
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
                 }
                 continue;
-            }
-
-            if (currentQuoteLevel > 0) {
-                markdown += '\n';
-                currentQuoteLevel = 0;
             }
 
             if (node.nodeType === Node.ELEMENT_NODE && node.matches('.push')) {
@@ -160,9 +166,9 @@
                 }
                 const tag = node.querySelector('.push-tag')?.textContent.trim() ?? '';
                 const user = node.querySelector('.push-userid')?.textContent.trim() ?? '';
-                const content = node.querySelector('.push-content')?.textContent ?? '';
+                const pushContent = node.querySelector('.push-content')?.textContent ?? '';
                 const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
-                markdown += `${tag} ${user}${content} ${time}\n`;
+                markdown += `${tag} ${user}${pushContent} ${time}\n`;
                 continue;
             }
 
@@ -177,13 +183,7 @@
                 continue;
             }
 
-            if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'A') {
-                textBuffer += `[${node.textContent}](${node.href})`;
-            } else {
-                 if (node.textContent) {
-                    textBuffer += node.textContent;
-                }
-            }
+            textBuffer += node.textContent || '';
         }
 
         flushTextBuffer();
