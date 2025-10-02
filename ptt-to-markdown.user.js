@@ -98,6 +98,10 @@
         const flushTextBuffer = () => {
             const trimmedBuffer = textBuffer.trim();
             if (trimmedBuffer) {
+                if (currentQuoteLevel > 0) {
+                    markdown += '\n';
+                    currentQuoteLevel = 0;
+                }
                 markdown += trimmedBuffer + '\n\n';
             }
             textBuffer = '';
@@ -105,8 +109,10 @@
 
         const getQuoteInfo = (node) => {
             const text = node.textContent;
+            const isHeader = text.includes('※ 引述'); // FIX 1
+
             let level = 0;
-            let isHeader = text.includes('※');
+            let content = text;
 
             if (node.matches('.f2')) {
                 level = 1;
@@ -114,19 +120,18 @@
                 const indentMatch = text.match(/^(: *)+/);
                 const numColons = indentMatch ? (indentMatch[0].match(/:/g) || []).length : 0;
                 level = numColons + (isHeader ? 1 : 0);
-                if (level === 0 && node.matches('.f6')) level = 1;
+                if (level === 0) level = 1;
             }
 
-            let content = text.replace(/^(:| |※)+/, '').trim();
+            content = text.replace(/^(:| |※)+/, '').trim();
             if (isHeader) {
-                content = `[!quote] ${content}`;
+                content = `[!quote] ${content.replace(/^引述/, '').trim()}`;
             }
 
             return { level, content };
         };
 
         for (const node of nodes) {
-            // Skip metadata and empty text nodes
             if (node.nodeType === Node.ELEMENT_NODE && node.matches('.article-metaline, .article-metaline-right')) {
                 continue;
             }
@@ -137,26 +142,30 @@
             const isQuote = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
             const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
 
-            if (!isQuote && currentQuoteLevel > 0) {
-                markdown += '\n';
-                currentQuoteLevel = 0;
-            }
-            if (!isPush && inPushBlock) {
-                markdown += '```\n\n';
-                inPushBlock = false;
-            }
-
             if (isQuote) {
                 flushTextBuffer();
                 const { level, content } = getQuoteInfo(node);
                 if (level > 0) {
                     if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
-                        markdown += '\n'; // De-indenting
+                        markdown += '> '.repeat(level) + '\n'; // FIX 2
                     }
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
                 }
-            } else if (isPush) {
+                continue;
+            }
+
+            if (currentQuoteLevel > 0) {
+                markdown += '\n';
+                currentQuoteLevel = 0;
+            }
+
+            if (!isPush && inPushBlock) {
+                markdown += '```\n\n';
+                inPushBlock = false;
+            }
+
+            if (isPush) {
                 flushTextBuffer();
                 if (!inPushBlock) {
                     markdown += '```\n';
@@ -167,21 +176,19 @@
                 const pushContent = node.querySelector('.push-content')?.textContent ?? '';
                 const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
                 markdown += `${tag} ${user}${pushContent} ${time}\n`;
-            } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+            }
+            else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
                 flushTextBuffer();
                 markdown += '---\n\n';
-            } else {
+            }
+            else {
                 textBuffer += node.textContent || '';
             }
         }
 
         flushTextBuffer();
-        if (currentQuoteLevel > 0) {
-             markdown += '\n';
-        }
-        if (inPushBlock) {
-            markdown += '```\n';
-        }
+        if (currentQuoteLevel > 0) markdown += '\n';
+        if (inPushBlock) markdown += '```\n';
 
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
