@@ -87,7 +87,7 @@
         markdown += `# ${meta['標題'] || 'No Title'}\n\n`;
         markdown += `**作者:** ${meta['作者'] || 'N/A'}\n`;
         markdown += `**看板:** ${meta['看板'] || 'N/A'}\n`;
-        markdown += `**時間:** ${meta['時間'] || 'N/A'}\n`;
+        markdown += `**時間:** ${meta['時間'] || 'N/A'}\n\n`;
         markdown += '---\n\n';
 
         const nodes = mainContent.childNodes;
@@ -97,6 +97,9 @@
         const flushTextBuffer = () => {
             const trimmedBuffer = textBuffer.replace(/[\n\s]+$/, '').replace(/^[\n\s]+/, '');
             if (trimmedBuffer) {
+                if (markdown && !markdown.endsWith('\n\n') && !markdown.endsWith('```\n')) {
+                    markdown += '\n';
+                }
                 markdown += trimmedBuffer + '\n\n';
             }
             textBuffer = '';
@@ -142,7 +145,6 @@
                 lines.forEach(line => {
                     markdown += `> ${line.trim()}\n`;
                 });
-                markdown += '\n';
                 continue;
             }
 
