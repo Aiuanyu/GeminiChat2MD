@@ -1,1 +1,0 @@
-When updating the `@version` in `ptt-to-markdown.user.js`, be sure to also update the hardcoded `version` constant within the `extractContent` function. This ensures that the `parser` version in the generated Markdown's frontmatter matches the script's version.
