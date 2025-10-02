@@ -91,7 +91,7 @@
         markdown += '---\n\n';
 
         const nodes = mainContent.childNodes;
-        let inPushBlock = false;
+        let inPushTable = false;
         let textBuffer = '';
         let currentQuoteLevel = 0;
 
@@ -109,7 +109,7 @@
 
         const getQuoteInfo = (node) => {
             const text = node.textContent;
-            const isHeader = text.includes('※ 引述'); // FIX 1
+            const isHeader = text.includes('※ 引述');
 
             let level = 0;
             let content = text;
@@ -143,11 +143,15 @@
             const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
 
             if (isQuote) {
+                if (inPushTable) {
+                    markdown += '\n'; // End of table
+                    inPushTable = false;
+                }
                 flushTextBuffer();
                 const { level, content } = getQuoteInfo(node);
                 if (level > 0) {
                     if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
-                        markdown += '> '.repeat(level) + '\n'; // FIX 2
+                        markdown += '> '.repeat(level) + '\n';
                     }
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
@@ -155,29 +159,36 @@
                 continue;
             }
 
+            if (isPush) {
+                if (currentQuoteLevel > 0) {
+                    markdown += '\n'; // End of quote
+                    currentQuoteLevel = 0;
+                }
+                flushTextBuffer();
+                if (!inPushTable) {
+                    markdown += '| Tag | User | Content | Time |\n';
+                    markdown += '|---|---|---|---|\n';
+                    inPushTable = true;
+                }
+                const tag = node.querySelector('.push-tag')?.textContent.trim() ?? '';
+                const user = node.querySelector('.push-userid')?.textContent.trim() ?? '';
+                const pushContent = (node.querySelector('.push-content')?.textContent.replace(/^: /, '').trim() ?? '').replace(/\|/g, '\\|');
+                const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
+                markdown += `| ${tag} | ${user} | ${pushContent} | ${time} |\n`;
+                continue;
+            }
+
+            // Not a quote or a push, end any open blocks
             if (currentQuoteLevel > 0) {
                 markdown += '\n';
                 currentQuoteLevel = 0;
             }
-
-            if (!isPush && inPushBlock) {
-                markdown += '```\n\n';
-                inPushBlock = false;
+            if (inPushTable) {
+                markdown += '\n';
+                inPushTable = false;
             }
 
-            if (isPush) {
-                flushTextBuffer();
-                if (!inPushBlock) {
-                    markdown += '```\n';
-                    inPushBlock = true;
-                }
-                const tag = node.querySelector('.push-tag')?.textContent.trim() ?? '';
-                const user = node.querySelector('.push-userid')?.textContent.trim() ?? '';
-                const pushContent = node.querySelector('.push-content')?.textContent ?? '';
-                const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
-                markdown += `${tag} ${user}${pushContent} ${time}\n`;
-            }
-            else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
                 flushTextBuffer();
                 markdown += '---\n\n';
             }
@@ -188,7 +199,7 @@
 
         flushTextBuffer();
         if (currentQuoteLevel > 0) markdown += '\n';
-        if (inPushBlock) markdown += '```\n';
+        if (inPushTable) markdown += '\n';
 
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
