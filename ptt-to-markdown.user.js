@@ -107,30 +107,28 @@
             textBuffer = '';
         };
 
-       const getQuoteInfo = (node) => {
-            let text = node.textContent;
+        const getQuoteInfo = (node) => {
+            const text = node.textContent;
             let level = 0;
             let isHeader = false;
-
-            const match = text.match(/^(: ?)+/);
-            const indentStr = match ? match[0] : '';
-            const numColons = (indentStr.match(/:/g) || []).length;
-
-            text = text.substring(indentStr.length);
 
             if (node.matches('.f2')) {
                 level = 1;
                 isHeader = true;
             } else if (node.matches('.f6')) {
-                level = numColons + 1;
-                if (text.trim().startsWith('※')) {
+                if (text.startsWith(': ※')) {
+                    level = 2;
                     isHeader = true;
+                } else if (text.startsWith('::')) {
+                    level = 2;
+                } else if (text.startsWith(':')) {
+                    level = 1;
                 }
             }
 
-            let content = text.trim();
+            let content = text.replace(/^(:| |※)+/, '').trim();
             if (isHeader) {
-                content = `[!quote] ${content.replace(/^※\s*/, '').trim()}`;
+                content = `[!quote] ${content}`;
             }
 
             return { level, content };
@@ -142,15 +140,20 @@
                 continue;
             }
 
-            const isQuoteElement = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                textBuffer += node.textContent || '';
+                continue;
+            }
+
+            const isQuoteElement = node.matches('.f2, .f6');
 
             if (isQuoteElement) {
                 flushTextBuffer();
                 const { level, content } = getQuoteInfo(node);
 
                 if (level > 0) {
-                    if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
-                         markdown += '\n';
+                    if (currentQuoteLevel > level) {
+                         markdown += '> \n';
                     }
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
@@ -158,7 +161,7 @@
                 continue;
             }
 
-            if (node.nodeType === Node.ELEMENT_NODE && node.matches('.push')) {
+            if (node.matches('.push')) {
                 flushTextBuffer();
                 if (!inPushBlock) {
                     markdown += '```\n';
@@ -177,7 +180,7 @@
                 inPushBlock = false;
             }
 
-            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+            if (node.textContent.trim() === '--') {
                 flushTextBuffer();
                 markdown += '---\n\n';
                 continue;
