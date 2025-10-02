@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         PTT to Markdown
-// @namespace    http://tampermonkey.net/
+// @namespace    Aiuanyu
 // @version      0.2
 // @description  Downloads a PTT article and comments as a Markdown file.
-// @author       You
+// @author       Aiuanyu x Jules
 // @match        https://www.ptt.cc/bbs/*
 // @grant        none
 // @license      MIT
@@ -172,7 +172,7 @@
                 }
                 flushTextBuffer();
                 if (!inPushTable) {
-                    markdown += '| Tag | User | Content | Time |\n';
+                    markdown += '|  | ID |  | 時間 |\n';
                     markdown += '|---|---|---|---|\n';
                     inPushTable = true;
                 }
