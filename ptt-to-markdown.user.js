@@ -84,6 +84,12 @@
             }
         });
 
+        const version = '0.2'; // This should be updated with the @version in the header
+        markdown += `---\n`;
+        markdown += `parser: "PTT to Markdown v${version}"\n`;
+        markdown += `tags: PTT\n`;
+        markdown += `---\n\n`;
+
         markdown += `# ${meta['標題'] || 'No Title'}\n\n`;
         markdown += `**作者:** ${meta['作者'] || 'N/A'}\n`;
         markdown += `**看板:** ${meta['看板'] || 'N/A'}\n`;
