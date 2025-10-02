@@ -96,11 +96,7 @@
         let currentQuoteLevel = 0;
 
         const flushTextBuffer = () => {
-            if (currentQuoteLevel > 0) {
-                markdown += '\n';
-                currentQuoteLevel = 0;
-            }
-            const trimmedBuffer = textBuffer.replace(/[\n\s]+$/, '').replace(/^[\n\s]+/, '');
+            const trimmedBuffer = textBuffer.trim();
             if (trimmedBuffer) {
                 markdown += trimmedBuffer + '\n\n';
             }
@@ -118,7 +114,7 @@
                 const indentMatch = text.match(/^(: *)+/);
                 const numColons = indentMatch ? (indentMatch[0].match(/:/g) || []).length : 0;
                 level = numColons + (isHeader ? 1 : 0);
-                if (level === 0 && node.matches('.f6')) level = 1; // .f6 is always at least level 1
+                if (level === 0 && node.matches('.f6')) level = 1;
             }
 
             let content = text.replace(/^(:| |※)+/, '').trim();
@@ -130,30 +126,38 @@
         };
 
         for (const node of nodes) {
+            // Skip metadata and empty text nodes
             if (node.nodeType === Node.ELEMENT_NODE && node.matches('.article-metaline, .article-metaline-right')) {
                 continue;
             }
+            if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
+                continue;
+            }
 
-            const isQuoteElement = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
+            const isQuote = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
+            const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
 
-            if (isQuoteElement) {
+            if (!isQuote && currentQuoteLevel > 0) {
+                markdown += '\n';
+                currentQuoteLevel = 0;
+            }
+            if (!isPush && inPushBlock) {
+                markdown += '```\n\n';
+                inPushBlock = false;
+            }
+
+            if (isQuote) {
                 flushTextBuffer();
                 const { level, content } = getQuoteInfo(node);
-
                 if (level > 0) {
                     if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
-                        markdown += '\n';
+                        markdown += '\n'; // De-indenting
                     }
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
                 }
-                continue;
-            }
-
-            // If it's not a quote, flush any pending text and reset quote level
-            flushTextBuffer();
-
-            if (node.nodeType === Node.ELEMENT_NODE && node.matches('.push')) {
+            } else if (isPush) {
+                flushTextBuffer();
                 if (!inPushBlock) {
                     markdown += '```\n';
                     inPushBlock = true;
@@ -163,23 +167,18 @@
                 const pushContent = node.querySelector('.push-content')?.textContent ?? '';
                 const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
                 markdown += `${tag} ${user}${pushContent} ${time}\n`;
-                continue;
-            }
-
-            if (inPushBlock) {
-                markdown += '```\n\n';
-                inPushBlock = false;
-            }
-
-            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+            } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+                flushTextBuffer();
                 markdown += '---\n\n';
-                continue;
+            } else {
+                textBuffer += node.textContent || '';
             }
-
-            textBuffer += node.textContent || '';
         }
 
         flushTextBuffer();
+        if (currentQuoteLevel > 0) {
+             markdown += '\n';
+        }
         if (inPushBlock) {
             markdown += '```\n';
         }
