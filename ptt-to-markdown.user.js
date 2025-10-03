@@ -1,16 +1,17 @@
 // ==UserScript==
 // @name         PTT to Markdown
-// @namespace    http://tampermonkey.net/
-// @version      0.5
+// @namespace    https://github.com/Aiuanyu/GeminiChat2MD
+// @version      0.3
 // @description  Downloads a PTT article and comments as a Markdown file.
-// @author       You
+// @author       Aiuanyu & Jules
 // @match        https://www.ptt.cc/bbs/*
 // @grant        none
 // @license      MIT
 // ==/UserScript==
-
 (function() {
     'use strict';
+
+    const SCRIPT_VERSION = '0.3';
 
     function addStyles() {
         const css = `
@@ -56,9 +57,11 @@
 
         if (metaTitle) {
             const titleValue = metaTitle.nextElementSibling.textContent.trim();
+             // Sanitize title for filename, allowing non-ASCII chars but removing illegal filename chars.
             return titleValue.replace(/^Re: /, '').replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 50);
         }
 
+        // Fallback using URL
         const match = window.location.pathname.match(/bbs\/(.+)\/(M\..+\.A\..+)\.html/);
         if (match) {
             return `${match[1]}-${match[2]}`;
@@ -76,16 +79,15 @@
         let markdown = '';
         const meta = {};
         mainContent.querySelectorAll('.article-metaline, .article-metaline-right').forEach(line => {
-            const tag = line.querySelector('.article-meta-tag')?.textContent.trim();
-            const value = line.querySelector('.article-meta-value')?.textContent.trim();
+            const tag = line.querySelector('.article-meta-tag')?.textContent?.trim();
+            const value = line.querySelector('.article-meta-value')?.textContent?.trim();
             if (tag && value) {
                 meta[tag] = value;
             }
         });
 
-        const version = '0.5';
         markdown += `---\n`;
-        markdown += `parser: "PTT to Markdown v${version}"\n`;
+        markdown += `parser: "PTT to Markdown v${SCRIPT_VERSION}"\n`;
         markdown += `tags: PTT\n`;
         markdown += `---\n\n`;
 
@@ -95,15 +97,19 @@
         markdown += `**時間:** ${meta['時間'] || 'N/A'}\n\n`;
         markdown += '---\n\n';
 
-        const nodes = Array.from(mainContent.childNodes);
+        const nodes = mainContent.childNodes;
         let inPushTable = false;
-        let currentQuoteLevel = 0;
         let textBuffer = '';
+        let currentQuoteLevel = 0;
 
         const flushTextBuffer = () => {
-            const trimmed = textBuffer.trim();
-            if (trimmed) {
-                markdown += trimmed + '\n\n';
+            const trimmedBuffer = textBuffer.trim();
+            if (trimmedBuffer) {
+                if (currentQuoteLevel > 0) {
+                    markdown += '\n';
+                    currentQuoteLevel = 0;
+                }
+                markdown += trimmedBuffer + '\n\n';
             }
             textBuffer = '';
         };
@@ -111,7 +117,9 @@
         const getQuoteInfo = (node) => {
             const text = node.textContent;
             const isHeader = text.includes('※ 引述');
+
             let level = 0;
+            let content = text;
 
             if (node.matches('.f2')) {
                 level = 1;
@@ -122,7 +130,7 @@
                 if (level === 0) level = 1;
             }
 
-            let content = text.replace(/^(:| |※)+/, '').trim();
+            content = text.replace(/^(:| |※)+/, '').trim();
             if (isHeader) {
                 content = `[!quote] ${content.replace(/^引述/, '').trim()}`;
             }
@@ -141,16 +149,11 @@
             const isQuote = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
             const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
 
-            if (!isQuote && currentQuoteLevel > 0) {
-                markdown += '\n';
-                currentQuoteLevel = 0;
-            }
-            if (!isPush && inPushTable) {
-                markdown += '\n';
-                inPushTable = false;
-            }
-
             if (isQuote) {
+                if (inPushTable) {
+                    markdown += '\n'; // End of table
+                    inPushTable = false;
+                }
                 flushTextBuffer();
                 const { level, content } = getQuoteInfo(node);
                 if (level > 0) {
@@ -160,22 +163,43 @@
                     markdown += '> '.repeat(level) + content + '\n';
                     currentQuoteLevel = level;
                 }
-            } else if (isPush) {
+                continue;
+            }
+
+            if (isPush) {
+                if (currentQuoteLevel > 0) {
+                    markdown += '\n'; // End of quote
+                    currentQuoteLevel = 0;
+                }
                 flushTextBuffer();
                 if (!inPushTable) {
-                    markdown += '| Tag | User | Content | Time |\n';
+                    markdown += '|  | ID |  | 時間 |\n';
                     markdown += '|---|---|---|---|\n';
                     inPushTable = true;
                 }
-                const tag = node.querySelector('.push-tag')?.textContent.trim() ?? '';
-                const user = node.querySelector('.push-userid')?.textContent.trim() ?? '';
-                const content = (node.querySelector('.push-content')?.textContent.replace(/^: /, '').trim() ?? '').replace(/\|/g, '\\|');
-                const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
-                markdown += `| ${tag} | ${user} | ${content} | ${time} |\n`;
-            } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
+                const tag = (node.querySelector('.push-tag')?.textContent ?? '').trim();
+                const user = (node.querySelector('.push-userid')?.textContent ?? '').trim();
+                const pushContent = ((node.querySelector('.push-content')?.textContent ?? '').replace(/^: /, '').trim() ?? '').replace(/\|/g, '\\|');
+                const time = (node.querySelector('.push-ipdatetime')?.textContent ?? '').trim();
+                markdown += `| ${tag} | ${user} | ${pushContent} | ${time} |\n`;
+                continue;
+            }
+
+            // Not a quote or a push, end any open blocks
+            if (currentQuoteLevel > 0) {
+                markdown += '\n';
+                currentQuoteLevel = 0;
+            }
+            if (inPushTable) {
+                markdown += '\n';
+                inPushTable = false;
+            }
+
+            if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
                 flushTextBuffer();
                 markdown += '---\n\n';
-            } else {
+            }
+            else {
                 textBuffer += node.textContent || '';
             }
         }
@@ -200,6 +224,7 @@
         URL.revokeObjectURL(url);
     }
 
+    // Run the script
     const observer = new MutationObserver((mutations, obs) => {
         if (document.getElementById('main-content')) {
             addStyles();
