@@ -239,6 +239,19 @@
                 });
                 markdown += '\n\n';
             }
+
+            const canvasContainer = turn.querySelector('.immersive-artifact-container');
+            if (canvasContainer) {
+                const canvasTitle = canvasContainer.querySelector('h2.title-text');
+                const canvasContent = canvasContainer.querySelector('.immersive-artifact-content');
+                if (canvasTitle && canvasContent) {
+                    markdown += `---\n\n## ${canvasTitle.textContent.trim()}\n\n`;
+                    canvasContent.childNodes.forEach(node => {
+                        markdown += parseNode(node);
+                    });
+                    markdown += '\n\n';
+                }
+            }
         });
 
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
