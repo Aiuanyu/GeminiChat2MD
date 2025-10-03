@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.6
+// @version      0.7
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.6';
+    const SCRIPT_VERSION = '0.7';
 
     function addStyles() {
         const css = `
@@ -68,6 +68,7 @@
         markdown += `---\n`;
         markdown += `parser: "Jules to Markdown v${SCRIPT_VERSION}"\n`;
         markdown += `title: "${getSanitizedTitle()}"\n`;
+        markdown += `url: "${window.location.href}"\n`;
         markdown += `tags: Jules\n`;
         markdown += `---\n\n`;
 
