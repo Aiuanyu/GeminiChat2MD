@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4
+// @version      0.5
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4';
+    const SCRIPT_VERSION = '0.5';
 
     function addStyles() {
         const css = `
@@ -237,12 +237,35 @@
     }
 
     function handleSubmissionCard(el) {
+        const headerEl = el.querySelector('.header-text');
+        const addedEl = el.querySelector('.num-lines.added');
+        const removedEl = el.querySelector('.num-lines.removed');
+        const branchInput = el.querySelector('.branch-input');
+        const runtimeEl = el.querySelector('.total-runtime');
         const commitInput = el.querySelector('textarea.commit-input[disabled]');
-        let markdown = '## Submission\n\n';
+
+        let markdown = '### ';
+        markdown += (headerEl ? headerEl.textContent.trim() : 'Submission') + '\n\n';
+
+        let details = [];
+        if (branchInput && branchInput.value) {
+            details.push(`**Branch:** \`${branchInput.value}\``);
+        }
+        if (addedEl && removedEl) {
+            details.push(`**Lines:** ${addedEl.textContent.trim()}/${removedEl.textContent.trim()}`);
+        }
+        if (runtimeEl) {
+            details.push(`**Time:** ${runtimeEl.textContent.trim()}`);
+        }
+
+        if (details.length > 0) {
+            markdown += `> ${details.join(' | ')}\n\n`;
+        }
+
         if (commitInput) {
              const commitMessage = commitInput.getAttribute('tc-textcontent');
              if (commitMessage) {
-                markdown += `**Commit:**\n\`\`\`\n${commitMessage.trim()}\n\`\`\`\n`;
+                markdown += `**Commit Message:**\n\`\`\`\n${commitMessage.trim()}\n\`\`\`\n`;
              }
         }
         return markdown + '\n';
