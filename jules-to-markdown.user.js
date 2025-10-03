@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.5
+// @version      0.6
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.5';
+    const SCRIPT_VERSION = '0.6';
 
     function addStyles() {
         const css = `
@@ -240,17 +240,15 @@
         const headerEl = el.querySelector('.header-text');
         const addedEl = el.querySelector('.num-lines.added');
         const removedEl = el.querySelector('.num-lines.removed');
-        const branchInput = el.querySelector('.branch-input');
         const runtimeEl = el.querySelector('.total-runtime');
-        const commitInput = el.querySelector('textarea.commit-input[disabled]');
 
         let markdown = '### ';
         markdown += (headerEl ? headerEl.textContent.trim() : 'Submission') + '\n\n';
 
         let details = [];
-        if (branchInput && branchInput.value) {
-            details.push(`**Branch:** \`${branchInput.value}\``);
-        }
+        // This data is not available in the static DOM, so we add a placeholder.
+        details.push(`**Branch:** \`[Manual copy-paste required]\``);
+
         if (addedEl && removedEl) {
             details.push(`**Lines:** ${addedEl.textContent.trim()}/${removedEl.textContent.trim()}`);
         }
@@ -262,12 +260,9 @@
             markdown += `> ${details.join(' | ')}\n\n`;
         }
 
-        if (commitInput) {
-             const commitMessage = commitInput.getAttribute('tc-textcontent');
-             if (commitMessage) {
-                markdown += `**Commit Message:**\n\`\`\`\n${commitMessage.trim()}\n\`\`\`\n`;
-             }
-        }
+        // The commit message is also dynamically rendered and not available in a static attribute.
+        markdown += `**Commit Message:**\n\`\`\`\n[Manual copy-paste required]\n\`\`\`\n`;
+
         return markdown + '\n';
     }
 
