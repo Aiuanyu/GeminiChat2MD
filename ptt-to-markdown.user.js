@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PTT to Markdown
 // @namespace    http://tampermonkey.net/
-// @version      0.4
+// @version      0.5
 // @description  Downloads a PTT article and comments as a Markdown file.
 // @author       You
 // @match        https://www.ptt.cc/bbs/*
@@ -83,7 +83,7 @@
             }
         });
 
-        const version = '0.4';
+        const version = '0.5';
         markdown += `---\n`;
         markdown += `parser: "PTT to Markdown v${version}"\n`;
         markdown += `tags: PTT\n`;
@@ -96,7 +96,8 @@
         markdown += '---\n\n';
 
         const nodes = Array.from(mainContent.childNodes);
-        let inPushBlock = false;
+        let inPushTable = false;
+        let currentQuoteLevel = 0;
         let textBuffer = '';
 
         const flushTextBuffer = () => {
@@ -107,57 +108,81 @@
             textBuffer = '';
         };
 
-        for (let i = 0; i < nodes.length; i++) {
-            const node = nodes[i];
+        const getQuoteInfo = (node) => {
+            const text = node.textContent;
+            const isHeader = text.includes('※ 引述');
+            let level = 0;
 
+            if (node.matches('.f2')) {
+                level = 1;
+            } else if (node.matches('.f6')) {
+                const indentMatch = text.match(/^(: *)+/);
+                const numColons = indentMatch ? (indentMatch[0].match(/:/g) || []).length : 0;
+                level = numColons + (isHeader ? 1 : 0);
+                if (level === 0) level = 1;
+            }
+
+            let content = text.replace(/^(:| |※)+/, '').trim();
+            if (isHeader) {
+                content = `[!quote] ${content.replace(/^引述/, '').trim()}`;
+            }
+
+            return { level, content };
+        };
+
+        for (const node of nodes) {
             if (node.nodeType === Node.ELEMENT_NODE && node.matches('.article-metaline, .article-metaline-right')) {
                 continue;
             }
-             if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
+            if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) {
                 continue;
             }
 
-            const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
             const isQuote = node.nodeType === Node.ELEMENT_NODE && (node.matches('.f2, .f6'));
+            const isPush = node.nodeType === Node.ELEMENT_NODE && node.matches('.push');
 
-            if (!isPush && inPushBlock) {
-                markdown += '```\n\n';
-                inPushBlock = false;
+            if (!isQuote && currentQuoteLevel > 0) {
+                markdown += '\n';
+                currentQuoteLevel = 0;
+            }
+            if (!isPush && inPushTable) {
+                markdown += '\n';
+                inPushTable = false;
             }
 
             if (isQuote) {
                 flushTextBuffer();
-                const quoteText = node.textContent.trim();
-                if (quoteText) {
-                    markdown += `> ${quoteText}\n`;
-                }
-                const nextNode = nodes[i + 1];
-                if (!nextNode || nextNode.nodeType !== Node.ELEMENT_NODE || !nextNode.matches('.f2, .f6')) {
-                   markdown += '\n';
+                const { level, content } = getQuoteInfo(node);
+                if (level > 0) {
+                    if (currentQuoteLevel > 0 && level < currentQuoteLevel) {
+                        markdown += '> '.repeat(level) + '\n';
+                    }
+                    markdown += '> '.repeat(level) + content + '\n';
+                    currentQuoteLevel = level;
                 }
             } else if (isPush) {
                 flushTextBuffer();
-                if (!inPushBlock) {
-                    markdown += '```\n';
-                    inPushBlock = true;
+                if (!inPushTable) {
+                    markdown += '| Tag | User | Content | Time |\n';
+                    markdown += '|---|---|---|---|\n';
+                    inPushTable = true;
                 }
                 const tag = node.querySelector('.push-tag')?.textContent.trim() ?? '';
                 const user = node.querySelector('.push-userid')?.textContent.trim() ?? '';
-                const content = (node.querySelector('.push-content')?.textContent ?? '').replace(/^: /, '').trim();
+                const content = (node.querySelector('.push-content')?.textContent.replace(/^: /, '').trim() ?? '').replace(/\|/g, '\\|');
                 const time = node.querySelector('.push-ipdatetime')?.textContent.trim() ?? '';
-                markdown += `${tag} ${user} ${content} ${time}\n`;
+                markdown += `| ${tag} | ${user} | ${content} | ${time} |\n`;
             } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim() === '--') {
-                 flushTextBuffer();
-                 markdown += '---\n\n';
+                flushTextBuffer();
+                markdown += '---\n\n';
             } else {
                 textBuffer += node.textContent || '';
             }
         }
 
         flushTextBuffer();
-        if (inPushBlock) {
-            markdown += '```\n';
-        }
+        if (currentQuoteLevel > 0) markdown += '\n';
+        if (inPushTable) markdown += '\n';
 
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
