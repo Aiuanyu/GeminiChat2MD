@@ -227,7 +227,6 @@
 
         let userCount = 0;
         let geminiCount = 0;
-        let julesCount = 0;
 
         turns.forEach(turn => {
             const userQuery = turn.querySelector('user-query');
@@ -238,21 +237,8 @@
 
             const modelResponse = turn.querySelector('.markdown');
             if (modelResponse) {
-                let modelName = 'Gemini';
-                // Heuristic to find model name by checking avatar alt text.
-                const avatar = turn.querySelector('img[alt]');
-                if (avatar && avatar.alt && avatar.alt.toLowerCase().includes('jules')) {
-                    modelName = 'Jules';
-                }
-
-                if (modelName === 'Jules') {
-                    julesCount++;
-                    markdown += `## Jules ${julesCount}\n`;
-                } else {
-                    geminiCount++;
-                    markdown += `## Gemini ${geminiCount}\n`;
-                }
-
+                geminiCount++;
+                markdown += `## Gemini ${geminiCount}\n`;
                  modelResponse.childNodes.forEach(node => {
                     markdown += parseNode(node);
                 });
