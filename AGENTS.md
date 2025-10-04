@@ -1,1 +1,3 @@
 When updating the `@version` in `ptt-to-markdown.user.js`, be sure to also update the top-level `SCRIPT_VERSION` constant. This ensures that the `parser` version in the generated Markdown's frontmatter matches the script's version.
+
+If an issue title contains `[Gemini]`, it indicates that the `gemini-to-markdown.user.js` script should be modified.

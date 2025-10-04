@@ -225,15 +225,34 @@
             return "Error: Could not find chat content.";
         }
 
+        let userCount = 0;
+        let geminiCount = 0;
+        let julesCount = 0;
+
         turns.forEach(turn => {
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
-                markdown += `## User\n${parseNode(userQuery).trim()}\n\n`;
+                userCount++;
+                markdown += `## User ${userCount}\n${parseNode(userQuery).trim()}\n\n`;
             }
 
             const modelResponse = turn.querySelector('.markdown');
             if (modelResponse) {
-                markdown += `## Gemini\n`;
+                let modelName = 'Gemini';
+                // Heuristic to find model name by checking avatar alt text.
+                const avatar = turn.querySelector('img[alt]');
+                if (avatar && avatar.alt && avatar.alt.toLowerCase().includes('jules')) {
+                    modelName = 'Jules';
+                }
+
+                if (modelName === 'Jules') {
+                    julesCount++;
+                    markdown += `## Jules ${julesCount}\n`;
+                } else {
+                    geminiCount++;
+                    markdown += `## Gemini ${geminiCount}\n`;
+                }
+
                  modelResponse.childNodes.forEach(node => {
                     markdown += parseNode(node);
                 });
