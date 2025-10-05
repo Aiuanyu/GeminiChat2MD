@@ -5,6 +5,7 @@
 // @description  Downloads a Threads profile's posts as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.threads.net/*
+// @match        https://www.threads.com/*
 // @grant        none
 // @license      MIT
 // ==/UserScript==
@@ -18,7 +19,7 @@
         const css = `
             .download-markdown-button {
                 position: fixed;
-                bottom: 20px;
+                top: 20px;
                 right: 20px;
                 background-color: #000000;
                 color: white;
@@ -81,11 +82,20 @@
 
         markdown += `# ${authorName} (@${username})\n\n`;
 
-        const postElements = document.querySelectorAll('div[role="region"][aria-label="直欄內文"] > div > div > div:nth-child(2) > div');
+        // Find all potential post containers. A real post must contain a time element.
+        // This is more robust than relying on fragile, obfuscated class names.
+        const allPotentialPosts = document.querySelectorAll('div[role="region"][aria-label="直欄內文"] > div > div:last-of-type > div > div > div');
+        const postElements = Array.from(allPotentialPosts).filter(el => el.querySelector('time[datetime]'));
+
 
         postElements.forEach(post => {
             const timeEl = post.querySelector('time');
-            if (!timeEl) return; // Not a post element
+            if (!timeEl) return; // Should not happen due to the filter above, but as a safeguard.
+
+            // Skip if this post is a quoted post inside another post we're already processing.
+            if (post.closest('.is-quote')) {
+                return;
+            }
 
             const datetime = timeEl.getAttribute('datetime');
             const postLinkEl = timeEl.closest('a');
@@ -144,13 +154,16 @@
 
 
             // --- Quoted Post ---
-            const quoteEl = post.querySelector('div.x6bh95i');
+            const quoteEl = post.querySelector('div[role="link"]'); // A quoted post is a big link
             if (quoteEl) {
+                // Mark it to avoid processing it as a top-level post later
+                quoteEl.classList.add('is-quote');
+
                 const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
                 const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
                 const quoteAuthorEl = quoteEl.querySelector('a[href*="/@"]');
                 const quoteAuthor = quoteAuthorEl ? quoteAuthorEl.textContent.trim() : 'N/A';
-                const quoteTextEl = quoteEl.querySelector('.x1a6qonq');
+                const quoteTextEl = quoteEl.querySelector('div > span');
                 const quoteText = quoteTextEl ? quoteTextEl.textContent.trim().replace(/\n+/g, ' ') : 'No text';
 
                 markdown += `> [!quote] **${quoteAuthor}**\n`;
