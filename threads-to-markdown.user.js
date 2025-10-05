@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.2
+// @version      0.3
 // @description  Downloads a Threads profile's posts as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.threads.net/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.2';
+    const SCRIPT_VERSION = '0.3';
 
     function addStyles() {
         const css = `
@@ -120,9 +120,26 @@
 
 
             // --- Text Content ---
-            const contentContainer = post.querySelector('div > span');
+            let contentContainer = null;
+            // The main text content is in a SPAN with dir=auto, but not one that's part of a link or button.
+            // We iterate through all of them and pick the first one that is not inside an interactive element.
+            const allSpans = post.querySelectorAll('span[dir="auto"]');
+            for(const span of allSpans) {
+                if(span.closest('a, [role="button"]')) {
+                    continue; // Skip spans inside links (username, time) or buttons (like/reply counts)
+                }
+                if (span.closest('div[role="link"]')) {
+                    continue; // Skip spans inside quoted posts
+                }
+                // This should be the main content span.
+                contentContainer = span;
+                break;
+            }
+
             if (contentContainer) {
                 let contentHTML = contentContainer.innerHTML;
+                // Clean up artifacts from other scripts and handle line breaks
+                contentHTML = contentHTML.replace(/<br class="added-by-userscript">/g, '\n');
                 contentHTML = contentHTML.replace(/<br\s*\/?>/gi, '\n');
                 const tempDiv = document.createElement('div');
                 tempDiv.innerHTML = contentHTML;
