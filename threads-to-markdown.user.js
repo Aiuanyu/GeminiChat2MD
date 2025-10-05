@@ -88,31 +88,35 @@
     }
 
     function extractContent() {
-        const authorName = document.querySelector('h1')?.textContent.trim() || 'N/A';
+        const h1 = document.querySelector('h1');
+        const authorName = h1 ? h1.textContent.trim() : 'N/A';
         const profileUrl = window.location.href;
         const usernameMatch = profileUrl.match(/@([^/]+)/);
         const username = usernameMatch ? usernameMatch[1] : 'N/A';
 
+        const bioEl = document.querySelector('.xw7yly9');
+        const bio = bioEl ? bioEl.textContent.trim() : '';
+
         let markdown = `---\n`;
         markdown += `parser: "Threads to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `author: ${authorName}\n`;
-        markdown += `username: ${username}\n`;
         markdown += `url: ${profileUrl}\n`;
         markdown += `tags: Threads\n`;
         markdown += `---\n\n`;
 
         markdown += `# ${authorName} (@${username})\n\n`;
+        if (bio) {
+            markdown += `${bio}\n\n---\n\n`;
+        }
 
         const allPostContainers = Array.from(document.querySelectorAll('div[data-pressable-container="true"]'));
         const postElements = allPostContainers.filter(p => {
-            // A top-level post is not inside another pressable container and has a timestamp.
             return p.querySelector('time[datetime]') && !p.parentElement.closest('div[data-pressable-container="true"]');
         });
 
 
         postElements.forEach(post => {
             const timeEl = post.querySelector('time');
-            if (!timeEl) return; // Should not happen due to the filter above, but as a safeguard.
+            if (!timeEl) return;
 
             const datetime = timeEl.getAttribute('datetime');
             const postLinkEl = timeEl.closest('a');
@@ -130,11 +134,17 @@
             const repostsEl = post.querySelector('[aria-label="轉發"]');
             const repostsCount = repostsEl ? (repostsEl.nextElementSibling?.textContent.trim() || '0') : '0';
 
+            const hashtags = Array.from(post.querySelectorAll('a[href*="serp_type=tags"]')).map(el => `[#${el.textContent.trim()}](${el.href})`);
+
             markdown += `**Metadata:**\n`;
             markdown += `- **Permalink:** [${postUrl}](${postUrl})\n`;
             markdown += `- **Likes:** ${likesCount}\n`;
             markdown += `- **Replies:** ${repliesCount}\n`;
-            markdown += `- **Shares/Reposts:** ${repostsCount}\n\n`;
+            markdown += `- **Shares/Reposts:** ${repostsCount}\n`;
+             if (hashtags.length > 0) {
+                 markdown += `- **Hashtags:** ${hashtags.join(' ')}\n`;
+            }
+            markdown += `\n`;
 
 
             // --- Text Content ---
@@ -142,7 +152,6 @@
             if (contentContainer) {
                 const tempContainer = contentContainer.cloneNode(true);
 
-                // Format thread indicators like `1/2` with backticks
                 tempContainer.querySelectorAll('div.x1rg5ohu').forEach(indicatorNode => {
                     const indicatorText = indicatorNode.textContent.replace(/\s/g, '');
                     if (indicatorText.match(/\d+\/\d+/)) {
