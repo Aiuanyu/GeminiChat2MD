@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3
+// @version      0.4
 // @description  Downloads a Threads profile's posts as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.threads.net/*
@@ -13,7 +13,28 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3';
+    const SCRIPT_VERSION = '0.4';
+
+    function formatDate(datetimeString) {
+        // Create a date object from the ISO string
+        const date = new Date(datetimeString);
+
+        // Convert to UTC+8
+        const targetDate = new Date(date.getTime() + (8 * 60 * 60 * 1000));
+
+        const year = targetDate.getUTCFullYear();
+        const month = (targetDate.getUTCMonth() + 1).toString().padStart(2, '0');
+        const day = targetDate.getUTCDate().toString().padStart(2, '0');
+
+        const week = ['日', '一', '二', '三', '四', '五', '六'];
+        const weekDay = `週${week[targetDate.getUTCDay()]}`;
+
+        const hours = targetDate.getUTCHours().toString().padStart(2, '0');
+        const minutes = targetDate.getUTCMinutes().toString().padStart(2, '0');
+
+        return `${year}${month}${day} ${weekDay} ${hours}:${minutes}`;
+    }
+
 
     function addStyles() {
         const css = `
@@ -97,7 +118,7 @@
             const postLinkEl = timeEl.closest('a');
             const postUrl = postLinkEl ? postLinkEl.href : 'No permalink found';
 
-            markdown += `## Post from ${new Date(datetime).toISOString()}\n\n`;
+            markdown += `## ${formatDate(datetime)}\n\n`;
 
             // --- Metadata ---
             const likesEl = post.querySelector('[aria-label="讚"]');
@@ -117,20 +138,27 @@
 
 
             // --- Text Content ---
-            let mainText = '';
-            const allSpans = post.querySelectorAll('span[dir="auto"]');
-            for (const span of allSpans) {
-                if (span.closest('a, [role="button"]')) continue;
-                // Ensure the span is not from a nested quoted post
-                if (span.closest('div[data-pressable-container="true"]') !== post) continue;
+            const contentContainer = post.querySelector('div.x1a6qonq');
+            if (contentContainer) {
+                const tempContainer = contentContainer.cloneNode(true);
 
-                const text = span.textContent.trim();
-                if (text.length > mainText.length) {
-                    mainText = text;
+                // Format thread indicators like `1/2` with backticks
+                tempContainer.querySelectorAll('div.x1rg5ohu').forEach(indicatorNode => {
+                    const indicatorText = indicatorNode.textContent.replace(/\s/g, '');
+                    if (indicatorText.match(/\d+\/\d+/)) {
+                        indicatorNode.replaceWith(' `' + indicatorText + '`');
+                    }
+                });
+
+                let contentHTML = tempContainer.innerHTML;
+                contentHTML = contentHTML.replace(/<br\s*\/?>/gi, '\n');
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = contentHTML;
+                const textContent = (tempDiv.textContent || '').trim();
+
+                if (textContent) {
+                    markdown += `${textContent}\n\n`;
                 }
-            }
-            if (mainText) {
-                markdown += `${mainText.replace(/\n\n/g, '\n')}\n\n`;
             }
 
 
@@ -155,26 +183,38 @@
 
 
             // --- Quoted Post ---
-            const quoteEl = post.querySelector('div[data-pressable-container="true"]');
-             if (quoteEl) {
+            const quoteEl = post.querySelector('div.x6bh95i');
+            if (quoteEl) {
                 const quoteAuthorEl = quoteEl.querySelector('a[href*="/@"]');
                 const quoteAuthor = quoteAuthorEl ? quoteAuthorEl.textContent.trim() : 'N/A';
+
+                const quoteTimeEl = quoteEl.querySelector('time');
+                const quoteTime = quoteTimeEl ? formatDate(quoteTimeEl.getAttribute('datetime')) : '';
+
                 const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
                 const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
 
                 let quoteText = '';
-                const quoteSpans = quoteEl.querySelectorAll('span[dir="auto"]');
-                for (const span of quoteSpans) {
-                    if (span.closest('a, [role="button"]')) continue;
-                    const text = span.textContent.trim();
-                    if (text.length > quoteText.length) {
-                        quoteText = text;
-                    }
+                const quoteContentContainer = quoteEl.querySelector('div.x1a6qonq');
+                if (quoteContentContainer) {
+                    const tempContainer = quoteContentContainer.cloneNode(true);
+                    tempContainer.querySelectorAll('div.x1rg5ohu').forEach(indicatorNode => {
+                         const indicatorText = indicatorNode.textContent.replace(/\s/g, '');
+                         if (indicatorText.match(/\d+\/\d+/)) {
+                            indicatorNode.replaceWith(' `' + indicatorText + '`');
+                        }
+                    });
+                     let contentHTML = tempContainer.innerHTML;
+                    contentHTML = contentHTML.replace(/<br\s*\/?>/gi, '\n');
+                    const tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = contentHTML;
+                    quoteText = (tempDiv.textContent || '').trim();
                 }
 
-                markdown += `> [!quote] **${quoteAuthor}**\n`;
+
+                markdown += `> [!quote] **${quoteAuthor}** (${quoteTime})\n`;
                 if (quoteText) {
-                    markdown += `> ${quoteText.replace(/\n\n/g, '\n')}\n`;
+                    markdown += `> ${quoteText.replace(/\n/g, '\n> ')}\n`;
                 }
                 markdown += `> [Link to quoted post](${quoteUrl})\n\n`;
             }
