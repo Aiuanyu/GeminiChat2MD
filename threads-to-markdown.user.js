@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4
+// @version      0.5
 // @description  Downloads a Threads profile's posts as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.threads.net/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4';
+    const SCRIPT_VERSION = '0.5';
 
     function formatDate(datetimeString) {
         // Create a date object from the ISO string
@@ -91,19 +91,19 @@
         const h1 = document.querySelector('h1');
         const authorName = h1 ? h1.textContent.trim() : 'N/A';
         const profileUrl = window.location.href;
-        const usernameMatch = profileUrl.match(/@([^/]+)/);
-        const username = usernameMatch ? usernameMatch[1] : 'N/A';
 
         const bioEl = document.querySelector('.xw7yly9');
         const bio = bioEl ? bioEl.textContent.trim() : '';
 
+        const isProfilePage = window.location.pathname.includes('/@');
+
         let markdown = `---\n`;
         markdown += `parser: "Threads to Markdown v${SCRIPT_VERSION}"\n`;
         markdown += `url: ${profileUrl}\n`;
-        markdown += `tags: Threads\n`;
+        markdown += `tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}\n`;
         markdown += `---\n\n`;
 
-        markdown += `# ${authorName} (@${username})\n\n`;
+        markdown += `# ${authorName}\n\n`;
         if (bio) {
             markdown += `${bio}\n\n---\n\n`;
         }
@@ -194,14 +194,17 @@
             // --- Quoted Post ---
             const quoteEl = post.querySelector('div.x6bh95i');
             if (quoteEl) {
-                const quoteAuthorEl = quoteEl.querySelector('a[href*="/@"]');
-                const quoteAuthor = quoteAuthorEl ? quoteAuthorEl.textContent.trim() : 'N/A';
+                const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
+                const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
+
+                let quoteAuthor = 'N/A';
+                const quoteAuthorMatch = quoteUrl.match(/@([^/]+)/);
+                if (quoteAuthorMatch) {
+                    quoteAuthor = quoteAuthorMatch[1];
+                }
 
                 const quoteTimeEl = quoteEl.querySelector('time');
                 const quoteTime = quoteTimeEl ? formatDate(quoteTimeEl.getAttribute('datetime')) : '';
-
-                const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
-                const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
 
                 let quoteText = '';
                 const quoteContentContainer = quoteEl.querySelector('div.x1a6qonq');
