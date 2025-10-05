@@ -82,19 +82,16 @@
 
         markdown += `# ${authorName} (@${username})\n\n`;
 
-        // Find all potential post containers by looking for a data attribute that seems to mark them,
-        // then filter to ensure they are actual posts by checking for a timestamp.
-        const postCandidates = document.querySelectorAll('div[data-pressable-container="true"]');
-        const postElements = Array.from(postCandidates).filter(el => el.querySelector('time[datetime]'));
+        const allPostContainers = Array.from(document.querySelectorAll('div[data-pressable-container="true"]'));
+        const postElements = allPostContainers.filter(p => {
+            // A top-level post is not inside another pressable container and has a timestamp.
+            return p.querySelector('time[datetime]') && !p.parentElement.closest('div[data-pressable-container="true"]');
+        });
+
 
         postElements.forEach(post => {
-            // Skip if this post is a quoted post inside another post we're already processing.
-            if (post.closest('div[role="link"]')) {
-                return;
-            }
-
             const timeEl = post.querySelector('time');
-            if (!timeEl) return;
+            if (!timeEl) return; // Should not happen due to the filter above, but as a safeguard.
 
             const datetime = timeEl.getAttribute('datetime');
             const postLinkEl = timeEl.closest('a');
@@ -120,34 +117,22 @@
 
 
             // --- Text Content ---
-            let contentContainer = null;
-            // The main text content is in a SPAN with dir=auto, but not one that's part of a link or button.
-            // We iterate through all of them and pick the first one that is not inside an interactive element.
+            let mainText = '';
             const allSpans = post.querySelectorAll('span[dir="auto"]');
-            for(const span of allSpans) {
-                if(span.closest('a, [role="button"]')) {
-                    continue; // Skip spans inside links (username, time) or buttons (like/reply counts)
+            for (const span of allSpans) {
+                if (span.closest('a, [role="button"]')) continue;
+                // Ensure the span is not from a nested quoted post
+                if (span.closest('div[data-pressable-container="true"]') !== post) continue;
+
+                const text = span.textContent.trim();
+                if (text.length > mainText.length) {
+                    mainText = text;
                 }
-                if (span.closest('div[role="link"]')) {
-                    continue; // Skip spans inside quoted posts
-                }
-                // This should be the main content span.
-                contentContainer = span;
-                break;
+            }
+            if (mainText) {
+                markdown += `${mainText.replace(/\n\n/g, '\n')}\n\n`;
             }
 
-            if (contentContainer) {
-                let contentHTML = contentContainer.innerHTML;
-                // Clean up artifacts from other scripts and handle line breaks
-                contentHTML = contentHTML.replace(/<br class="added-by-userscript">/g, '\n');
-                contentHTML = contentHTML.replace(/<br\s*\/?>/gi, '\n');
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = contentHTML;
-                const textContent = (tempDiv.textContent || '').trim();
-                if (textContent) {
-                     markdown += `${textContent}\n\n`;
-                }
-            }
 
             // --- Media ---
             const images = post.querySelectorAll('img:not([alt*="大頭貼照"])');
@@ -170,20 +155,27 @@
 
 
             // --- Quoted Post ---
-            const quoteEl = post.querySelector('div[role="link"]'); // A quoted post is a big link
-            if (quoteEl) {
-                // Mark it to avoid processing it as a top-level post later
-                quoteEl.classList.add('is-quote');
-
-                const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
-                const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
+            const quoteEl = post.querySelector('div[data-pressable-container="true"]');
+             if (quoteEl) {
                 const quoteAuthorEl = quoteEl.querySelector('a[href*="/@"]');
                 const quoteAuthor = quoteAuthorEl ? quoteAuthorEl.textContent.trim() : 'N/A';
-                const quoteTextEl = quoteEl.querySelector('div > span');
-                const quoteText = quoteTextEl ? quoteTextEl.textContent.trim().replace(/\n+/g, ' ') : 'No text';
+                const quoteLinkEl = quoteEl.querySelector('a[href*="/post/"]');
+                const quoteUrl = quoteLinkEl ? quoteLinkEl.href : 'N/A';
+
+                let quoteText = '';
+                const quoteSpans = quoteEl.querySelectorAll('span[dir="auto"]');
+                for (const span of quoteSpans) {
+                    if (span.closest('a, [role="button"]')) continue;
+                    const text = span.textContent.trim();
+                    if (text.length > quoteText.length) {
+                        quoteText = text;
+                    }
+                }
 
                 markdown += `> [!quote] **${quoteAuthor}**\n`;
-                markdown += `> ${quoteText}\n`;
+                if (quoteText) {
+                    markdown += `> ${quoteText.replace(/\n\n/g, '\n')}\n`;
+                }
                 markdown += `> [Link to quoted post](${quoteUrl})\n\n`;
             }
 
