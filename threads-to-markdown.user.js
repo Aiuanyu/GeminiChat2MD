@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Threads to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1
+// @version      0.2
 // @description  Downloads a Threads profile's posts as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.threads.net/*
@@ -13,7 +13,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1';
+    const SCRIPT_VERSION = '0.2';
 
     function addStyles() {
         const css = `
@@ -82,20 +82,19 @@
 
         markdown += `# ${authorName} (@${username})\n\n`;
 
-        // Find all potential post containers. A real post must contain a time element.
-        // This is more robust than relying on fragile, obfuscated class names.
-        const allPotentialPosts = document.querySelectorAll('div[role="region"][aria-label="直欄內文"] > div > div:last-of-type > div > div > div');
-        const postElements = Array.from(allPotentialPosts).filter(el => el.querySelector('time[datetime]'));
-
+        // Find all potential post containers by looking for a data attribute that seems to mark them,
+        // then filter to ensure they are actual posts by checking for a timestamp.
+        const postCandidates = document.querySelectorAll('div[data-pressable-container="true"]');
+        const postElements = Array.from(postCandidates).filter(el => el.querySelector('time[datetime]'));
 
         postElements.forEach(post => {
-            const timeEl = post.querySelector('time');
-            if (!timeEl) return; // Should not happen due to the filter above, but as a safeguard.
-
             // Skip if this post is a quoted post inside another post we're already processing.
-            if (post.closest('.is-quote')) {
+            if (post.closest('div[role="link"]')) {
                 return;
             }
+
+            const timeEl = post.querySelector('time');
+            if (!timeEl) return;
 
             const datetime = timeEl.getAttribute('datetime');
             const postLinkEl = timeEl.closest('a');
