@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Gemini to Markdown
-// @namespace    http://tampermonkey.net/
-// @version      0.5
-// @description  Downloads a Gemini chat conversation as a Markdown file.
-// @author       You
+// @namespace    https://github.com/Aiuanyu/GeminiChat2MD
+// @version      0.6
+// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
+// @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
 // @match        https://gemini.google.com/share/*
 // @grant        none
@@ -12,6 +12,8 @@
 
 (function() {
     'use strict';
+
+    const SCRIPT_VERSION = '0.6';
 
     function addStyles() {
         const css = `
@@ -188,8 +190,16 @@
     }
 
     function extractContent() {
-        let markdown = '';
         const isSharePage = window.location.pathname.startsWith('/share/');
+        const title = getSanitizedTitle();
+
+        let markdown = '';
+        markdown += `---\n`;
+        markdown += `parser: "Gemini to Markdown v${SCRIPT_VERSION}"\n`;
+        markdown += `title: "${title}"\n`;
+        markdown += `url: "${window.location.href}"\n`;
+        markdown += `tags: Gemini\n`;
+        markdown += `---\n\n`;
 
         if (isSharePage) {
             const titleElement = document.querySelector('h1 strong');
@@ -210,7 +220,7 @@
             markdown += '---\n\n';
 
         } else {
-             markdown += `# ${getSanitizedTitle()}\n\n`;
+             markdown += `# ${title}\n\n`;
         }
 
         let turns;
