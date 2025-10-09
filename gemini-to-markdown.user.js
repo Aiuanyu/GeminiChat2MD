@@ -5,6 +5,7 @@
 // @description  Downloads a Gemini chat conversation as a Markdown file.
 // @author       You
 // @match        https://gemini.google.com/app/*
+// @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
@@ -52,7 +53,7 @@
     }
 
     function getSanitizedTitle() {
-        if (window.location.pathname.startsWith('/app/')) {
+        if (window.location.pathname.startsWith('/app/') || window.location.pathname.startsWith('/gem/')) {
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
                  let title = firstPrompt.textContent.trim().substring(0, 40);
