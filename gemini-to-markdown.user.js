@@ -197,30 +197,23 @@ parser: "Gemini to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
 tags: Gemini
----
-
 `;
+
+        if (isSharePage) {
+            const publishTimeElement = document.querySelector('.publish-time');
+            if (publishTimeElement) {
+                markdown += `published: ${publishTimeElement.textContent.trim()}\n`;
+            }
+        }
+        markdown += `---\n\n`;
 
         if (isSharePage) {
             const titleElement = document.querySelector('h1 strong');
             if (titleElement) {
                 markdown += `# ${titleElement.textContent.trim()}\n\n`;
             }
-
-            const shareLinkElement = document.querySelector('.share-link');
-            if (shareLinkElement) {
-                markdown += `**Public Link:** ${shareLinkElement.href}\n\n`;
-            }
-
-            const publishTimeElement = document.querySelector('.publish-time');
-            if (publishTimeElement) {
-                markdown += `**Published:** ${publishTimeElement.textContent.trim()}\n\n`;
-            }
-
-            markdown += '---\n\n';
-
         } else {
-             markdown += `# ${title}\n\n`;
+            markdown += `# ${title}\n\n`;
         }
 
         let turns;

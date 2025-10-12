@@ -83,8 +83,7 @@
 
         const title = authorName ? `${authorName} (${username})` : username;
 
-        // Sanitize for filename
-        return `Threads-${title}`.replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 100);
+        return `Threads-${title}`.substring(0, 100);
     }
 
     function extractContent() {
@@ -97,11 +96,15 @@
 
         const isProfilePage = window.location.pathname.includes('/@');
 
-        let markdown = `---\n`;
-        markdown += `parser: "Threads to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `url: ${profileUrl}\n`;
-        markdown += `tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}\n`;
-        markdown += `---\n\n`;
+        const title = getSanitizedTitle();
+        let markdown = `---
+parser: "Threads to Markdown v${SCRIPT_VERSION}"
+title: "${title}"
+url: "${profileUrl}"
+tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}
+---
+
+`;
 
         markdown += `# ${authorName}\n\n`;
         if (bio) {
@@ -113,8 +116,9 @@
             return p.querySelector('time[datetime]') && !p.parentElement.closest('div[data-pressable-container="true"]');
         });
 
-
+        let postCount = 0;
         postElements.forEach(post => {
+            postCount++;
             const timeEl = post.querySelector('time');
             if (!timeEl) return;
 
@@ -122,7 +126,7 @@
             const postLinkEl = timeEl.closest('a');
             const postUrl = postLinkEl ? postLinkEl.href : 'No permalink found';
 
-            markdown += `## ${formatDate(datetime)}\n\n`;
+            markdown += `## Post ${postCount}: ${formatDate(datetime)}\n\n`;
 
             // --- Metadata ---
             const likesEl = post.querySelector('[aria-label="讚"]');

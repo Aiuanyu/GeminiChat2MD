@@ -52,9 +52,9 @@
     }
 
     function getSanitizedTitle() {
-        // Use the document title and sanitize it for a filename.
+        // Use the document title for a filename.
         const title = document.title || 'Jules Chat';
-        return title.replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 100);
+        return title.substring(0, 100);
     }
 
     function extractContent() {
@@ -64,22 +64,27 @@
             return "Error: Could not find Jules chat content.";
         }
 
-        let markdown = '';
-        markdown += `---\n`;
-        markdown += `parser: "Jules to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `title: "${getSanitizedTitle()}"\n`;
-        markdown += `url: "${window.location.href}"\n`;
-        markdown += `tags: Jules\n`;
-        markdown += `---\n\n`;
+        let markdown = `---
+parser: "Jules to Markdown v${SCRIPT_VERSION}"
+title: "${getSanitizedTitle()}"
+url: "${window.location.href}"
+tags: Jules
+---
+
+`;
 
         const elements = chatContainer.children;
+        let userMessageCount = 0;
+        let agentMessageCount = 0;
 
         for (const el of elements) {
             const tagName = el.tagName.toLowerCase();
             if (tagName === 'swebot-user-chat-bubble') {
-                markdown += handleUserMessage(el);
+                userMessageCount++;
+                markdown += handleUserMessage(el, userMessageCount);
             } else if (tagName === 'swebot-agent-chat-bubble') {
-                markdown += handleAgentMessage(el);
+                agentMessageCount++;
+                markdown += handleAgentMessage(el, agentMessageCount);
             } else if (tagName === 'swebot-plan') {
                 markdown += handlePlan(el);
             } else if (tagName === 'swebot-progress-update-card') {
@@ -157,19 +162,19 @@
     }
 
 
-    function handleUserMessage(el) {
+    function handleUserMessage(el, count) {
         const messageEl = el.querySelector('.message.normalize-headings .markdown');
         if (!messageEl) return '';
         const content = htmlToMarkdown(messageEl);
         // Apply blockquote line by line
         const quotedContent = content.split('\n').map(line => `> ${line}`).join('\n');
-        return `## User\n\n${quotedContent}\n\n`;
+        return `## User ${count}\n\n${quotedContent}\n\n`;
     }
 
-    function handleAgentMessage(el) {
+    function handleAgentMessage(el, count) {
         const messageEl = el.querySelector('.message.normalize-headings .markdown');
         if (!messageEl) return '';
-        return `## Jules\n\n${htmlToMarkdown(messageEl)}\n\n`;
+        return `## Jules ${count}\n\n${htmlToMarkdown(messageEl)}\n\n`;
     }
 
     function handlePlan(el) {

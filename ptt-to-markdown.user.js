@@ -57,8 +57,7 @@
 
         if (metaTitle) {
             const titleValue = metaTitle.nextElementSibling.textContent.trim();
-             // Sanitize title for filename, allowing non-ASCII chars but removing illegal filename chars.
-            return titleValue.replace(/^Re: /, '').replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 50);
+            return titleValue.replace(/^Re: /, '').substring(0, 50);
         }
 
         // Fallback using URL
@@ -86,10 +85,15 @@
             }
         });
 
-        markdown += `---\n`;
-        markdown += `parser: "PTT to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `tags: PTT\n`;
-        markdown += `---\n\n`;
+        const title = meta['標題'] || getSanitizedTitle();
+        markdown += `---
+parser: "PTT to Markdown v${SCRIPT_VERSION}"
+title: "${title}"
+url: "${window.location.href}"
+tags: PTT
+---
+
+`;
 
         markdown += `# ${meta['標題'] || 'No Title'}\n\n`;
         markdown += `**作者:** ${meta['作者'] || 'N/A'}\n`;
