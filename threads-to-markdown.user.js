@@ -96,8 +96,10 @@
 
         const isProfilePage = window.location.pathname.includes('/@');
 
+        const title = getSanitizedTitle();
         let markdown = `---\n`;
         markdown += `parser: "Threads to Markdown v${SCRIPT_VERSION}"\n`;
+        markdown += `title: "${title}"\n`;
         markdown += `url: ${profileUrl}\n`;
         markdown += `tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}\n`;
         markdown += `---\n\n`;

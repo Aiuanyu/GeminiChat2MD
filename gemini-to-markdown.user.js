@@ -191,27 +191,21 @@
         let markdown = '';
         const isSharePage = window.location.pathname.startsWith('/share/');
 
+        const title = getSanitizedTitle();
+        markdown += `---\n`;
+        markdown += `parser: "Gemini to Markdown v0.5"\n`;
+        markdown += `title: "${title}"\n`;
+        markdown += `url: "${window.location.href}"\n`;
+        markdown += `tags: Gemini\n`;
+
         if (isSharePage) {
-            const titleElement = document.querySelector('h1 strong');
-            if (titleElement) {
-                markdown += `# ${titleElement.textContent.trim()}\n\n`;
-            }
-
-            const shareLinkElement = document.querySelector('.share-link');
-            if (shareLinkElement) {
-                markdown += `**Public Link:** ${shareLinkElement.href}\n\n`;
-            }
-
             const publishTimeElement = document.querySelector('.publish-time');
             if (publishTimeElement) {
-                markdown += `**Published:** ${publishTimeElement.textContent.trim()}\n\n`;
+                markdown += `published: ${publishTimeElement.textContent.trim()}\n`;
             }
-
-            markdown += '---\n\n';
-
-        } else {
-             markdown += `# ${getSanitizedTitle()}\n\n`;
         }
+        markdown += `---\n\n`;
+        markdown += `# ${title}\n\n`;
 
         let turns;
         if (isSharePage) {

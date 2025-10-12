@@ -85,8 +85,11 @@
             }
         });
 
+        const title = meta['標題'] || getSanitizedTitle();
         markdown += `---\n`;
         markdown += `parser: "PTT to Markdown v${SCRIPT_VERSION}"\n`;
+        markdown += `title: "${title}"\n`;
+        markdown += `url: "${window.location.href}"\n`;
         markdown += `tags: PTT\n`;
         markdown += `---\n\n`;
 

@@ -73,13 +73,17 @@
         markdown += `---\n\n`;
 
         const elements = chatContainer.children;
+        let userMessageCount = 0;
+        let agentMessageCount = 0;
 
         for (const el of elements) {
             const tagName = el.tagName.toLowerCase();
             if (tagName === 'swebot-user-chat-bubble') {
-                markdown += handleUserMessage(el);
+                userMessageCount++;
+                markdown += handleUserMessage(el, userMessageCount);
             } else if (tagName === 'swebot-agent-chat-bubble') {
-                markdown += handleAgentMessage(el);
+                agentMessageCount++;
+                markdown += handleAgentMessage(el, agentMessageCount);
             } else if (tagName === 'swebot-plan') {
                 markdown += handlePlan(el);
             } else if (tagName === 'swebot-progress-update-card') {
@@ -157,19 +161,19 @@
     }
 
 
-    function handleUserMessage(el) {
+    function handleUserMessage(el, count) {
         const messageEl = el.querySelector('.message.normalize-headings .markdown');
         if (!messageEl) return '';
         const content = htmlToMarkdown(messageEl);
         // Apply blockquote line by line
         const quotedContent = content.split('\n').map(line => `> ${line}`).join('\n');
-        return `## User\n\n${quotedContent}\n\n`;
+        return `## User ${count}\n\n${quotedContent}\n\n`;
     }
 
-    function handleAgentMessage(el) {
+    function handleAgentMessage(el, count) {
         const messageEl = el.querySelector('.message.normalize-headings .markdown');
         if (!messageEl) return '';
-        return `## Jules\n\n${htmlToMarkdown(messageEl)}\n\n`;
+        return `## Jules ${count}\n\n${htmlToMarkdown(messageEl)}\n\n`;
     }
 
     function handlePlan(el) {
