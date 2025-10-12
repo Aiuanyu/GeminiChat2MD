@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         Gemini to Markdown
-// @namespace    http://tampermonkey.net/
-// @version      0.5
-// @description  Downloads a Gemini chat conversation as a Markdown file.
-// @author       You
+// @namespace    https://github.com/Aiuanyu/GeminiChat2MD
+// @version      0.6
+// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
+// @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
+// @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
@@ -12,6 +13,8 @@
 
 (function() {
     'use strict';
+
+    const SCRIPT_VERSION = '0.6';
 
     function addStyles() {
         const css = `
@@ -51,18 +54,16 @@
         document.body.appendChild(button);
     }
 
-    function getSanitizedTitle() {
-        if (window.location.pathname.startsWith('/app/')) {
+    function getTitle() {
+        if (window.location.pathname.startsWith('/app/') || window.location.pathname.startsWith('/gem/')) {
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
-                 let title = firstPrompt.textContent.trim().substring(0, 40);
-                 return title;
+                 return firstPrompt.textContent.trim().substring(0, 40);
             }
             return 'gemini-chat';
         }
         const titleElement = document.querySelector('h1 strong');
-        let title = titleElement ? titleElement.textContent.trim() : 'gemini-chat';
-        return title;
+        return titleElement ? titleElement.textContent.trim() : 'gemini-chat';
     }
 
     function parseFilePreview(filePreviewElement) {
@@ -188,12 +189,11 @@
     }
 
     function extractContent() {
-        let markdown = '';
         const isSharePage = window.location.pathname.startsWith('/share/');
+        const title = getTitle();
 
-        const title = getSanitizedTitle();
-        markdown += `---\n`;
-        markdown += `parser: "Gemini to Markdown v0.5"\n`;
+        let markdown = `---\n`;
+        markdown += `parser: "Gemini to Markdown v${SCRIPT_VERSION}"\n`;
         markdown += `title: "${title}"\n`;
         markdown += `url: "${window.location.href}"\n`;
         markdown += `tags: Gemini\n`;
@@ -205,7 +205,15 @@
             }
         }
         markdown += `---\n\n`;
-        markdown += `# ${title}\n\n`;
+
+        if (isSharePage) {
+            const titleElement = document.querySelector('h1 strong');
+            if (titleElement) {
+                markdown += `# ${titleElement.textContent.trim()}\n\n`;
+            }
+        } else {
+            markdown += `# ${title}\n\n`;
+        }
 
         let turns;
         if (isSharePage) {
@@ -262,7 +270,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${getSanitizedTitle()}.md`;
+        a.download = `${getTitle()}.md`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
