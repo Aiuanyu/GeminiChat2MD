@@ -53,18 +53,16 @@
         document.body.appendChild(button);
     }
 
-    function getSanitizedTitle() {
+    function getTitle() {
         if (window.location.pathname.startsWith('/app/')) {
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
-                 let title = firstPrompt.textContent.trim().substring(0, 40);
-                 return title.replace(/[^a-z0-9_ -]/gi, '_').replace(/ /g, '_');
+                 return firstPrompt.textContent.trim().substring(0, 40);
             }
             return 'gemini-chat';
         }
         const titleElement = document.querySelector('h1 strong');
-        let title = titleElement ? titleElement.textContent.trim() : 'gemini-chat';
-        return title.replace(/[^a-z0-9_ -]/gi, '_').replace(/ /g, '_');
+        return titleElement ? titleElement.textContent.trim() : 'gemini-chat';
     }
 
     function parseFilePreview(filePreviewElement) {
@@ -191,15 +189,16 @@
 
     function extractContent() {
         const isSharePage = window.location.pathname.startsWith('/share/');
-        const title = getSanitizedTitle();
+        const title = getTitle();
 
-        let markdown = '';
-        markdown += `---\n`;
-        markdown += `parser: "Gemini to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `title: "${title}"\n`;
-        markdown += `url: "${window.location.href}"\n`;
-        markdown += `tags: Gemini\n`;
-        markdown += `---\n\n`;
+        let markdown = `---
+parser: "Gemini to Markdown v${SCRIPT_VERSION}"
+title: "${title}"
+url: "${window.location.href}"
+tags: Gemini
+---
+
+`;
 
         if (isSharePage) {
             const titleElement = document.querySelector('h1 strong');
@@ -278,7 +277,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${getSanitizedTitle()}.md`;
+        a.download = `${getTitle()}.md`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
