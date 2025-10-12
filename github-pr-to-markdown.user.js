@@ -96,8 +96,9 @@
                 return ul_items;
             case 'ol':
                 let ol_items = '';
-                el.childNodes.forEach((li, i) => {
-                     if (li.nodeName === 'LI') ol_items += `${i + 1}. ${nodeToMarkdown(li).trim()}\n`;
+                let itemIndex = 1;
+                el.childNodes.forEach(li => {
+                    if (li.nodeName === 'LI') ol_items += `${itemIndex++}. ${nodeToMarkdown(li).trim()}\n`;
                 });
                 return ol_items;
             case 'li': return `${childrenMarkdown}`;
@@ -135,17 +136,6 @@
             markdown += nodeToMarkdown(node);
         });
         return markdown.replace(/\n\s*\n/g, '\n\n').trim();
-    }
-
-    function handleComment(el) {
-        const author = el.querySelector('.timeline-comment-header .author')?.textContent.trim() || 'Unknown';
-        const timestamp = el.querySelector('.timeline-comment-header relative-time')?.getAttribute('datetime') || '';
-        const body = el.querySelector('.comment-body');
-        if (!body) return '';
-
-        let markdown = `### Comment by ${author} on ${timestamp}\n\n`;
-        markdown += htmlToMarkdown(body);
-        return markdown + '\n\n';
     }
 
     function handleCommit(el) {
@@ -188,7 +178,7 @@ author: ${author}
 status: "${status}"
 head: "${headRef}"
 base: "${baseRef}"
-labels: [${labels.join(', ')}]
+labels: [${labels.map(l => `"${l.replace(/"/g, '\\"')}"`).join(', ')}]
 ---
 
 # PR: ${titleEl.textContent.trim()} (${prNumber})
