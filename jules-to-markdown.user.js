@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.7
+// @version      0.8
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.7';
+    const SCRIPT_VERSION = '0.8';
 
     function addStyles() {
         const css = `
@@ -148,8 +148,9 @@ tags: Jules
                 return ul_items;
             case 'ol':
                 let ol_items = '';
-                el.childNodes.forEach((li, i) => {
-                     if (li.nodeName === 'LI') ol_items += `${i + 1}. ${nodeToMarkdown(li).trim()}\n`;
+                let itemIndex = 1;
+                el.childNodes.forEach(li => {
+                    if (li.nodeName === 'LI') ol_items += `${itemIndex++}. ${nodeToMarkdown(li).trim()}\n`;
                 });
                 return ol_items;
             case 'li': return `${childrenMarkdown}`;
