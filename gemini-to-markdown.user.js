@@ -5,6 +5,7 @@
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
+// @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
@@ -54,7 +55,7 @@
     }
 
     function getTitle() {
-        if (window.location.pathname.startsWith('/app/')) {
+        if (window.location.pathname.startsWith('/app/') || window.location.pathname.startsWith('/gem/')) {
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
                  return firstPrompt.textContent.trim().substring(0, 40);
