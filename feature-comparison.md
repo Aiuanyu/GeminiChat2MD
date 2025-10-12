@@ -1,30 +1,34 @@
-# Userscript Feature Comparison
+# 使用者腳本功能比較
 
-This table compares the features of the different "to Markdown" userscripts in this repository.
+此表格比較本儲存庫中不同「轉為 Markdown」使用者腳本的功能。
 
-| Feature | `gemini-to-markdown` | `jules-to-markdown` | `ptt-to-markdown` | `threads-to-markdown` |
+| 功能 | `gemini-to-markdown` | `jules-to-markdown` | `ptt-to-markdown` | `threads-to-markdown` |
 | :--- | :---: | :---: | :---: | :---: |
-| **Basic Conversion** | | | | |
-| Text & Basic Formatting | ✅ | ✅ | ✅ | ✅ |
-| Code Blocks | ✅ | ✅ | ❌ | ❌ |
-| Links | ✅ | ✅ | ✅ | ✅ |
-| Lists (ul, ol) | ✅ | ✅ | ❌ | ❌ |
-| **Special Content** | | | | |
-| Tables | ✅ | ❌ | ✅ | ❌ |
-| Images | ✅ | ❌ | ❌ | ✅ |
-| Videos | ❌ | ❌ | ❌ | ✅ |
-| File Attachments | ✅ | ❌ | ❌ | ❌ |
-| Quoted Content/Replies | ❌ | ❌ | ✅ | ✅ |
-| Chat History Parsing | ✅ | ✅ | ❌ | ❌ |
-| Full Page/Feed Scraping | ❌ | ❌ | ✅ | ✅ |
-| **Metadata Extraction** | | | | |
-| Author / Username | ✅ | ✅ | ✅ | ✅ |
-| Title / Header | ✅ | ✅ | ✅ | ✅ |
-| URL / Permalink | ✅ | ✅ | ✅ | ✅ |
-| Timestamp | ✅ | ✅ | ✅ | ✅ |
-| Engagement (Likes, Replies) | ❌ | ❌ | ✅ | ✅ |
-| Hashtags | ❌ | ❌ | ❌ | ✅ |
-| **Platform-Specific Elements** | | | | |
-| Gemini Canvas | ✅ | ❌ | ❌ | ❌ |
-| Jules Plan & Tool Output | ❌ | ✅ | ❌ | ❌ |
-| PTT Comment "Push" Table | ❌ | ❌ | ✅ | ❌ |
+| **基本轉換** | | | | |
+| 文字與基本格式 | ✅ | ✅ | ✅ | ✅ |
+| 程式碼區塊 | ✅ | ✅ | ❌ | ❌ |
+| 連結 | ✅ | ✅ | ✅ | ✅ |
+| 清單 (ul, ol) | ✅ | ✅ | ❌ | ❌ |
+| **特殊內容** | | | | |
+| 表格 | ✅ | ❌ | ✅ | ❌ |
+| 圖片 | ✅ | ❌ | ❌ | ✅ |
+| 影片 | ❌ | ❌ | ❌ | ✅ |
+| 檔案附件 | ✅ | ❌ | ❌ | ❌ |
+| 引用內容／回覆 | ❌ | ❌ | ✅ | ✅ |
+| 聊天記錄剖析 | ✅ | ✅ | ❌ | ❌ |
+| 整頁／動態牆爬取 | ❌ | ❌ | ✅ | ✅ |
+| **元資料擷取** | | | | |
+| 作者／使用者名稱 | ✅ | ✅ | ✅ | ✅ |
+| 標題 | ✅ | ✅ | ✅ | ✅ |
+| 網址／固定連結 | ✅ | ✅ | ✅ | ✅ |
+| 時間戳 | ✅ | ✅ | ✅ | ✅ |
+| 互動（讚、回覆） | ❌ | ❌ | ✅ | ✅ |
+| 主題標籤 | ❌ | ❌ | ❌ | ✅ |
+| **平台專屬元件** | | | | |
+| Gemini 畫布 | ✅ | ❌ | ❌ | ❌ |
+| Jules 計畫與工具輸出 | ❌ | ✅ | ❌ | ❌ |
+| PTT 推文表格 | ❌ | ❌ | ✅ | ❌ |
+| **輸出格式** | | | | |
+| 檔名（非 ASCII） | ✅ | ✅ | ✅ | ✅ |
+| Frontmatter 標題（非 ASCII） | ❌ | ✅ | ❌ | ❌ |
+| 對話順序編號 | ✅ | ❌ | ❌ | ❌ |
