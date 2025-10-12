@@ -57,8 +57,7 @@
 
         if (metaTitle) {
             const titleValue = metaTitle.nextElementSibling.textContent.trim();
-             // Sanitize title for filename, allowing non-ASCII chars but removing illegal filename chars.
-            return titleValue.replace(/^Re: /, '').replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 50);
+            return titleValue.replace(/^Re: /, '').substring(0, 50);
         }
 
         // Fallback using URL

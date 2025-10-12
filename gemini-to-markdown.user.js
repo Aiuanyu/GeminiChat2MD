@@ -56,13 +56,13 @@
             const firstPrompt = document.querySelector('.query-text p');
             if (firstPrompt) {
                  let title = firstPrompt.textContent.trim().substring(0, 40);
-                 return title.replace(/[^a-z0-9_ -]/gi, '_').replace(/ /g, '_');
+                 return title;
             }
             return 'gemini-chat';
         }
         const titleElement = document.querySelector('h1 strong');
         let title = titleElement ? titleElement.textContent.trim() : 'gemini-chat';
-        return title.replace(/[^a-z0-9_ -]/gi, '_').replace(/ /g, '_');
+        return title;
     }
 
     function parseFilePreview(filePreviewElement) {

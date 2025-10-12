@@ -83,8 +83,7 @@
 
         const title = authorName ? `${authorName} (${username})` : username;
 
-        // Sanitize for filename
-        return `Threads-${title}`.replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 100);
+        return `Threads-${title}`.substring(0, 100);
     }
 
     function extractContent() {

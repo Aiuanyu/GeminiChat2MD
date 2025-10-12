@@ -52,9 +52,9 @@
     }
 
     function getSanitizedTitle() {
-        // Use the document title and sanitize it for a filename.
+        // Use the document title for a filename.
         const title = document.title || 'Jules Chat';
-        return title.replace(/[\\/:\*?"<>\|]/g, '_').substring(0, 100);
+        return title.substring(0, 100);
     }
 
     function extractContent() {
