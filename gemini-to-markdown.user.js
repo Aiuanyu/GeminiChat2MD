@@ -192,11 +192,12 @@
         const isSharePage = window.location.pathname.startsWith('/share/');
         const title = getTitle();
 
-        let markdown = `---\n`;
-        markdown += `parser: "Gemini to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `title: "${title}"\n`;
-        markdown += `url: "${window.location.href}"\n`;
-        markdown += `tags: Gemini\n`;
+        let markdown = `---
+parser: "Gemini to Markdown v${SCRIPT_VERSION}"
+title: "${title}"
+url: "${window.location.href}"
+tags: Gemini
+`;
 
         if (isSharePage) {
             const publishTimeElement = document.querySelector('.publish-time');

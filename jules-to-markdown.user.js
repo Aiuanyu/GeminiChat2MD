@@ -64,13 +64,14 @@
             return "Error: Could not find Jules chat content.";
         }
 
-        let markdown = '';
-        markdown += `---\n`;
-        markdown += `parser: "Jules to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `title: "${getSanitizedTitle()}"\n`;
-        markdown += `url: "${window.location.href}"\n`;
-        markdown += `tags: Jules\n`;
-        markdown += `---\n\n`;
+        let markdown = `---
+parser: "Jules to Markdown v${SCRIPT_VERSION}"
+title: "${getSanitizedTitle()}"
+url: "${window.location.href}"
+tags: Jules
+---
+
+`;
 
         const elements = chatContainer.children;
         let userMessageCount = 0;

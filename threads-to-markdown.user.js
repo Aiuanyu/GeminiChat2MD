@@ -97,12 +97,14 @@
         const isProfilePage = window.location.pathname.includes('/@');
 
         const title = getSanitizedTitle();
-        let markdown = `---\n`;
-        markdown += `parser: "Threads to Markdown v${SCRIPT_VERSION}"\n`;
-        markdown += `title: "${title}"\n`;
-        markdown += `url: ${profileUrl}\n`;
-        markdown += `tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}\n`;
-        markdown += `---\n\n`;
+        let markdown = `---
+parser: "Threads to Markdown v${SCRIPT_VERSION}"
+title: "${title}"
+url: "${profileUrl}"
+tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}
+---
+
+`;
 
         markdown += `# ${authorName}\n\n`;
         if (bio) {
@@ -114,8 +116,9 @@
             return p.querySelector('time[datetime]') && !p.parentElement.closest('div[data-pressable-container="true"]');
         });
 
-
+        let postCount = 0;
         postElements.forEach(post => {
+            postCount++;
             const timeEl = post.querySelector('time');
             if (!timeEl) return;
 
@@ -123,7 +126,7 @@
             const postLinkEl = timeEl.closest('a');
             const postUrl = postLinkEl ? postLinkEl.href : 'No permalink found';
 
-            markdown += `## ${formatDate(datetime)}\n\n`;
+            markdown += `## Post ${postCount}: ${formatDate(datetime)}\n\n`;
 
             // --- Metadata ---
             const likesEl = post.querySelector('[aria-label="讚"]');
