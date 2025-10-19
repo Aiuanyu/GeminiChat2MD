@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.6
+// @version      0.7
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -14,7 +14,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.6';
+    const SCRIPT_VERSION = '0.7';
 
     function addStyles() {
         const css = `
@@ -66,15 +66,22 @@
         return titleElement ? titleElement.textContent.trim() : 'gemini-chat';
     }
 
-    function parseFilePreview(filePreviewElement) {
-        const fileNameElement = filePreviewElement.querySelector('.new-file-name');
-        const fileTypeElement = filePreviewElement.querySelector('.new-file-type');
-        const fileName = fileNameElement ? fileNameElement.textContent.trim() : '';
-        const fileType = fileTypeElement ? `.${fileTypeElement.textContent.trim()}` : '';
-        if (fileName) {
-            return `\n> **Attachment:** \`${fileName}${fileType}\`\n`;
+    function parseFilePreview(filePreviewContainer) {
+        const filePreviews = filePreviewContainer.querySelectorAll('user-query-file-preview');
+        if (filePreviews.length === 0) {
+            return '';
         }
-        return '';
+
+        const attachments = Array.from(filePreviews).map(filePreviewElement => {
+            const fileNameElement = filePreviewElement.querySelector('.new-file-name');
+            const fileTypeElement = filePreviewElement.querySelector('.new-file-type');
+            const fileName = fileNameElement ? fileNameElement.textContent.trim() : 'unknown';
+            const fileType = fileTypeElement ? `.${fileTypeElement.textContent.trim()}` : '';
+            return `\`${fileName}${fileType}\``;
+        });
+
+        const label = attachments.length > 1 ? 'Attachments' : 'Attachment';
+        return `\n> **${label}:** ${attachments.join(', ')}\n`;
     }
 
     function parseNode(node, listLevel = 0) {
