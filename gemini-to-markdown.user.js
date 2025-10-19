@@ -72,7 +72,7 @@
             return '';
         }
 
-        let attachments = Array.from(filePreviews).map(filePreviewElement => {
+        const attachments = Array.from(filePreviews).map(filePreviewElement => {
             const fileNameElement = filePreviewElement.querySelector('.new-file-name');
             const fileTypeElement = filePreviewElement.querySelector('.new-file-type');
             const fileName = fileNameElement ? fileNameElement.textContent.trim() : 'unknown';
@@ -80,11 +80,8 @@
             return `\`${fileName}${fileType}\``;
         });
 
-        if (attachments.length > 0) {
-            return `\n> **Attachments:** ${attachments.join(', ')}\n`;
-        }
-
-        return '';
+        const label = attachments.length > 1 ? 'Attachments' : 'Attachment';
+        return `\n> **${label}:** ${attachments.join(', ')}\n`;
     }
 
     function parseNode(node, listLevel = 0) {
