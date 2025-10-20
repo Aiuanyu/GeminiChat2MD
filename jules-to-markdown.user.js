@@ -119,7 +119,7 @@ tags: Jules
         return markdown.replace(/\n\s*\n/g, '\n\n').trim();
     }
 
-    function nodeToMarkdown(node) {
+    function nodeToMarkdown(node, listLevel = 0) {
         if (node.nodeType === Node.TEXT_NODE) {
             return node.textContent;
         }
@@ -130,10 +130,11 @@ tags: Jules
         const el = node;
         let childrenMarkdown = '';
         el.childNodes.forEach(child => {
-            childrenMarkdown += nodeToMarkdown(child);
+            childrenMarkdown += nodeToMarkdown(child, listLevel + 1);
         });
 
         const tagName = el.tagName.toLowerCase();
+        const indentation = '  '.repeat(listLevel);
 
         switch (tagName) {
             case 'p': return childrenMarkdown + '\n\n';
@@ -142,19 +143,28 @@ tags: Jules
             case 'em': case 'i': return `*${childrenMarkdown}*`;
             case 'code': return el.closest('pre') ? childrenMarkdown : `\`${childrenMarkdown}\``;
             case 'br': return '\n';
+            case 'hr': return '\n---\n';
+            case 'h3': return `### ${childrenMarkdown}\n\n`;
+            case 'blockquote':
+                return childrenMarkdown.split('\n').filter(line => line.trim()).map(line => `> ${line}`).join('\n') + '\n\n';
             case 'ul':
                 let ul_items = '';
                 el.childNodes.forEach(li => {
-                    if (li.nodeName === 'LI') ul_items += `* ${nodeToMarkdown(li).trim()}\n`;
+                    if (li.nodeName === 'LI') {
+                         ul_items += `${indentation}* ${nodeToMarkdown(li, listLevel).trim()}\n`;
+                    }
                 });
                 return ul_items;
             case 'ol':
                 let ol_items = '';
-                el.childNodes.forEach((li, i) => {
-                     if (li.nodeName === 'LI') ol_items += `${i + 1}. ${nodeToMarkdown(li).trim()}\n`;
+                let item_number = 1;
+                el.childNodes.forEach(li => {
+                     if (li.nodeName === 'LI') {
+                        ol_items += `${indentation}${item_number++}. ${nodeToMarkdown(li, listLevel).trim()}\n`;
+                     }
                 });
                 return ol_items;
-            case 'li': return `${childrenMarkdown}`;
+            case 'li': return `${childrenMarkdown.trim()}`;
             case 'pre':
                  const code = el.querySelector('code');
                  const lang = code ? (code.className.match(/language-(\S+)/) || [])[1] || '' : '';
