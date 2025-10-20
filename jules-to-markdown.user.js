@@ -220,16 +220,18 @@ tags: Jules
         const summaryEl = el.querySelector('.summary');
         if (!summaryEl) return '';
 
-        // Clone the element to avoid modifying the live DOM
-        const summaryClone = summaryEl.cloneNode(true);
-
-        // Replace file-name spans with markdown code blocks
-        summaryClone.querySelectorAll('.file-name').forEach(span => {
-            span.textContent = `\`${span.textContent.trim()}\``;
+        let parts = [];
+        summaryEl.childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                parts.push(node.textContent);
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('file-name')) {
+                parts.push(`\`${node.textContent.trim()}\``);
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                parts.push(node.textContent);
+            }
         });
 
-        // Get the text content, which now includes the markdown
-        const summaryText = summaryClone.textContent.replace(/\s+/g, ' ').trim();
+        const summaryText = parts.join(' ').replace(/\s+/g, ' ').trim();
 
         if (!summaryText) return '';
 
