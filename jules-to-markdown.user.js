@@ -128,13 +128,42 @@ tags: Jules
         }
 
         const el = node;
+        const tagName = el.tagName.toLowerCase();
+        const indentation = '  '.repeat(listLevel);
+
+        // Special handling for lists
+        if (tagName === 'ul' || tagName === 'ol') {
+            let list_items = '';
+            let item_number = 1;
+            el.childNodes.forEach(li => {
+                if (li.nodeName === 'LI') {
+                    const marker = tagName === 'ul' ? '*' : `${item_number++}.`;
+                    // Process children of li, and check if it contains a nested list
+                    let liContent = '';
+                    let hasNestedList = false;
+                    li.childNodes.forEach(child => {
+                        if (child.nodeType === Node.ELEMENT_NODE && (child.tagName.toLowerCase() === 'ul' || child.tagName.toLowerCase() === 'ol')) {
+                            hasNestedList = true;
+                        }
+                        liContent += nodeToMarkdown(child, listLevel + 1);
+                    });
+
+                    if (hasNestedList) {
+                        // Add a newline before the nested list for proper rendering
+                        list_items += `${indentation}${marker} ${liContent.trim()}\n`;
+                    } else {
+                        list_items += `${indentation}${marker} ${liContent.trim()}\n`;
+                    }
+                }
+            });
+            return `\n${list_items}`;
+        }
+
+        // General element processing
         let childrenMarkdown = '';
         el.childNodes.forEach(child => {
             childrenMarkdown += nodeToMarkdown(child, listLevel);
         });
-
-        const tagName = el.tagName.toLowerCase();
-        const indentation = '  '.repeat(listLevel > 0 ? listLevel -1 : 0);
 
         switch (tagName) {
             case 'p': return childrenMarkdown + '\n\n';
@@ -147,19 +176,7 @@ tags: Jules
             case 'h3': return `### ${childrenMarkdown}\n\n`;
             case 'blockquote':
                 return childrenMarkdown.split('\n').filter(line => line.trim()).map(line => `> ${line}`).join('\n') + '\n\n';
-            case 'ul':
-            case 'ol':
-                let list_items = '';
-                let item_number = 1;
-                el.childNodes.forEach(li => {
-                    if (li.nodeName === 'LI') {
-                        const marker = tagName === 'ul' ? '*' : `${item_number++}.`;
-                        list_items += `${indentation}${marker} ${nodeToMarkdown(li, listLevel + 1).trim()}\n`;
-                    }
-                });
-                return list_items;
-
-            case 'li': return `${childrenMarkdown.trim()}`;
+            case 'li': return childrenMarkdown; // Let the ul/ol handler do the trimming
             case 'pre':
                  const code = el.querySelector('code');
                  const lang = code ? (code.className.match(/language-(\S+)/) || [])[1] || '' : '';
