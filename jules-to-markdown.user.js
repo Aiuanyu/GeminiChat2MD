@@ -103,6 +103,8 @@ tags: Jules
                 markdown += `> ${el.textContent.trim()}\n\n`;
             } else if (el.classList.contains('timestamp')) {
                 markdown += `\n*${el.textContent.trim()}*\n\n`;
+            } else if (el.classList.contains('step-description-card')) {
+                markdown += handleStepDescriptionCard(el);
             }
         }
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
@@ -215,11 +217,23 @@ tags: Jules
     }
 
     function handleCodeDiff(el) {
-        const fileNameEl = el.querySelector('.file-name');
-        if (!fileNameEl) return '';
-        // The actual diff content isn't readily available in a simple format in the static DOM.
-        // We will just indicate the file was changed, which is the most reliable info for now.
-        return `> [!note] **Code Change**\n> Updated ${fileNameEl.textContent.trim()}\n\n`;
+        const summaryEl = el.querySelector('.summary');
+        if (!summaryEl) return '';
+
+        // Clone the element to avoid modifying the live DOM
+        const summaryClone = summaryEl.cloneNode(true);
+
+        // Replace file-name spans with markdown code blocks
+        summaryClone.querySelectorAll('.file-name').forEach(span => {
+            span.textContent = `\`${span.textContent.trim()}\``;
+        });
+
+        // Get the text content, which now includes the markdown
+        const summaryText = summaryClone.textContent.replace(/\s+/g, ' ').trim();
+
+        if (!summaryText) return '';
+
+        return `> [!note] **Code Change**\n> ${summaryText}\n\n`;
     }
 
     function handleToolCodeOutput(el) {
@@ -272,6 +286,15 @@ tags: Jules
         return markdown + '\n';
     }
 
+    function handleStepDescriptionCard(el) {
+        const descriptionEl = el.querySelector('.step-description');
+        if (!descriptionEl) return '';
+
+        const content = htmlToMarkdown(descriptionEl);
+        // Apply blockquote line by line
+        const quotedContent = content.split('\n').map(line => `> ${line}`).join('\n');
+        return `> [!note]\n${quotedContent}\n\n`;
+    }
 
     function downloadMarkdown() {
         const markdownContent = extractContent();
