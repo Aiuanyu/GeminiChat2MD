@@ -130,11 +130,11 @@ tags: Jules
         const el = node;
         let childrenMarkdown = '';
         el.childNodes.forEach(child => {
-            childrenMarkdown += nodeToMarkdown(child, listLevel + 1);
+            childrenMarkdown += nodeToMarkdown(child, listLevel);
         });
 
         const tagName = el.tagName.toLowerCase();
-        const indentation = '  '.repeat(listLevel);
+        const indentation = '  '.repeat(listLevel > 0 ? listLevel -1 : 0);
 
         switch (tagName) {
             case 'p': return childrenMarkdown + '\n\n';
@@ -148,22 +148,17 @@ tags: Jules
             case 'blockquote':
                 return childrenMarkdown.split('\n').filter(line => line.trim()).map(line => `> ${line}`).join('\n') + '\n\n';
             case 'ul':
-                let ul_items = '';
-                el.childNodes.forEach(li => {
-                    if (li.nodeName === 'LI') {
-                         ul_items += `${indentation}* ${nodeToMarkdown(li, listLevel).trim()}\n`;
-                    }
-                });
-                return ul_items;
             case 'ol':
-                let ol_items = '';
+                let list_items = '';
                 let item_number = 1;
                 el.childNodes.forEach(li => {
-                     if (li.nodeName === 'LI') {
-                        ol_items += `${indentation}${item_number++}. ${nodeToMarkdown(li, listLevel).trim()}\n`;
-                     }
+                    if (li.nodeName === 'LI') {
+                        const marker = tagName === 'ul' ? '*' : `${item_number++}.`;
+                        list_items += `${indentation}${marker} ${nodeToMarkdown(li, listLevel + 1).trim()}\n`;
+                    }
                 });
-                return ol_items;
+                return list_items;
+
             case 'li': return `${childrenMarkdown.trim()}`;
             case 'pre':
                  const code = el.querySelector('code');
