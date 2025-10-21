@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.7
+// @version      0.8
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
@@ -11,7 +11,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.7';
+    const SCRIPT_VERSION = '0.8';
 
     function addStyles() {
         const css = `
@@ -103,6 +103,8 @@ tags: Jules
                 markdown += `> ${el.textContent.trim()}\n\n`;
             } else if (el.classList.contains('timestamp')) {
                 markdown += `\n*${el.textContent.trim()}*\n\n`;
+            } else if (el.classList.contains('step-description-card')) {
+                markdown += handleStepDescriptionCard(el);
             }
         }
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
@@ -117,7 +119,7 @@ tags: Jules
         return markdown.replace(/\n\s*\n/g, '\n\n').trim();
     }
 
-    function nodeToMarkdown(node) {
+    function nodeToMarkdown(node, listLevel = 0) {
         if (node.nodeType === Node.TEXT_NODE) {
             return node.textContent;
         }
@@ -126,12 +128,42 @@ tags: Jules
         }
 
         const el = node;
+        const tagName = el.tagName.toLowerCase();
+        const indentation = '    '.repeat(listLevel);
+
+        // Special handling for lists
+        if (tagName === 'ul' || tagName === 'ol') {
+            let list_items = '';
+            let item_number = 1;
+            el.childNodes.forEach(li => {
+                if (li.nodeName === 'LI') {
+                    const marker = tagName === 'ul' ? '*' : `${item_number++}.`;
+                    // Process children of li, and check if it contains a nested list
+                    let liContent = '';
+                    let hasNestedList = false;
+                    li.childNodes.forEach(child => {
+                        if (child.nodeType === Node.ELEMENT_NODE && (child.tagName.toLowerCase() === 'ul' || child.tagName.toLowerCase() === 'ol')) {
+                            hasNestedList = true;
+                        }
+                        liContent += nodeToMarkdown(child, listLevel + 1);
+                    });
+
+                    if (hasNestedList) {
+                        // Add a newline before the nested list for proper rendering
+                        list_items += `${indentation}${marker} ${liContent.trim()}\n`;
+                    } else {
+                        list_items += `${indentation}${marker} ${liContent.trim()}\n`;
+                    }
+                }
+            });
+            return `\n${list_items}`;
+        }
+
+        // General element processing
         let childrenMarkdown = '';
         el.childNodes.forEach(child => {
-            childrenMarkdown += nodeToMarkdown(child);
+            childrenMarkdown += nodeToMarkdown(child, listLevel);
         });
-
-        const tagName = el.tagName.toLowerCase();
 
         switch (tagName) {
             case 'p': return childrenMarkdown + '\n\n';
@@ -140,19 +172,11 @@ tags: Jules
             case 'em': case 'i': return `*${childrenMarkdown}*`;
             case 'code': return el.closest('pre') ? childrenMarkdown : `\`${childrenMarkdown}\``;
             case 'br': return '\n';
-            case 'ul':
-                let ul_items = '';
-                el.childNodes.forEach(li => {
-                    if (li.nodeName === 'LI') ul_items += `* ${nodeToMarkdown(li).trim()}\n`;
-                });
-                return ul_items;
-            case 'ol':
-                let ol_items = '';
-                el.childNodes.forEach((li, i) => {
-                     if (li.nodeName === 'LI') ol_items += `${i + 1}. ${nodeToMarkdown(li).trim()}\n`;
-                });
-                return ol_items;
-            case 'li': return `${childrenMarkdown}`;
+            case 'hr': return '\n---\n';
+            case 'h3': return `### ${childrenMarkdown}\n\n`;
+            case 'blockquote':
+                return childrenMarkdown.split('\n').filter(line => line.trim()).map(line => `> ${line}`).join('\n') + '\n\n';
+            case 'li': return childrenMarkdown; // Let the ul/ol handler do the trimming
             case 'pre':
                  const code = el.querySelector('code');
                  const lang = code ? (code.className.match(/language-(\S+)/) || [])[1] || '' : '';
@@ -215,11 +239,25 @@ tags: Jules
     }
 
     function handleCodeDiff(el) {
-        const fileNameEl = el.querySelector('.file-name');
-        if (!fileNameEl) return '';
-        // The actual diff content isn't readily available in a simple format in the static DOM.
-        // We will just indicate the file was changed, which is the most reliable info for now.
-        return `> [!note] **Code Change**\n> Updated ${fileNameEl.textContent.trim()}\n\n`;
+        const summaryEl = el.querySelector('.summary');
+        if (!summaryEl) return '';
+
+        let parts = [];
+        summaryEl.childNodes.forEach(node => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                parts.push(node.textContent);
+            } else if (node.nodeType === Node.ELEMENT_NODE && node.classList.contains('file-name')) {
+                parts.push(`\`${node.textContent.trim()}\``);
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                parts.push(node.textContent);
+            }
+        });
+
+        const summaryText = parts.join(' ').replace(/\s+/g, ' ').trim();
+
+        if (!summaryText) return '';
+
+        return `> [!note] **Code Change**\n> ${summaryText}\n\n`;
     }
 
     function handleToolCodeOutput(el) {
@@ -272,6 +310,15 @@ tags: Jules
         return markdown + '\n';
     }
 
+    function handleStepDescriptionCard(el) {
+        const descriptionEl = el.querySelector('.step-description');
+        if (!descriptionEl) return '';
+
+        const content = htmlToMarkdown(descriptionEl);
+        // Apply blockquote line by line
+        const quotedContent = content.split('\n').map(line => `> ${line}`).join('\n');
+        return `> [!note]\n${quotedContent}\n\n`;
+    }
 
     function downloadMarkdown() {
         const markdownContent = extractContent();
