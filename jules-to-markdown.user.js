@@ -129,7 +129,7 @@ tags: Jules
 
         const el = node;
         const tagName = el.tagName.toLowerCase();
-        const indentation = '  '.repeat(listLevel);
+        const indentation = '    '.repeat(listLevel);
 
         // Special handling for lists
         if (tagName === 'ul' || tagName === 'ol') {

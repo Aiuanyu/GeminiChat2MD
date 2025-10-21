@@ -126,7 +126,7 @@
             case 'ul':
             case 'ol':
                 let listContent = '';
-                const indent = '  '.repeat(listLevel);
+                const indent = '    '.repeat(listLevel);
                 Array.from(node.children).forEach((li, i) => {
                     const marker = node.tagName.toLowerCase() === 'ul' ? '*' : `${i + 1}.`;
                     let liText = '';
