@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4
+// @version      0.5
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4';
+    const SCRIPT_VERSION = '0.5';
 
     function addStyles() {
         const css = `
@@ -125,6 +125,21 @@
         }
     }
 
+    function parseArtifactBlock(node) {
+        const titleElement = node.querySelector('.leading-tight.text-sm.line-clamp-1');
+        const previewElement = node.querySelector('.whitespace-pre-wrap.text-\\[0\\.3rem\\]');
+
+        let markdown = '\n\n';
+        if (titleElement) {
+            markdown += `> **_${titleElement.textContent.trim()}_**\n>\n`;
+        }
+        if (previewElement) {
+            const previewText = previewElement.textContent.trim().replace(/\n/g, '\n> ');
+            markdown += `> ${previewText}\n\n`;
+        }
+        return markdown;
+    }
+
     function extractContent() {
         const title = getTitle();
 
@@ -157,12 +172,16 @@ tags: Claude
                 markdown += `## User ${userCount}\n\n${parseNode(userQuery).trim()}\n\n`;
             }
 
-            const modelResponses = turn.querySelectorAll('.standard-markdown');
-            if (modelResponses.length > 0) {
+            const responseContainer = turn.querySelector('.font-claude-response');
+            if (responseContainer && responseContainer.children.length > 0) {
                 claudeCount++;
                 let claudeText = '';
-                modelResponses.forEach(response => {
-                    claudeText += parseNode(response).trim() + '\n\n';
+                Array.from(responseContainer.children).forEach(child => {
+                    if (child.querySelector('.standard-markdown')) {
+                        claudeText += parseNode(child.querySelector('.standard-markdown')).trim() + '\n\n';
+                    } else if (child.querySelector('.artifact-block-cell')) {
+                        claudeText += parseArtifactBlock(child).trim() + '\n\n';
+                    }
                 });
                 markdown += `## Claude ${claudeCount}\n${claudeText.trim()}\n\n`;
             }
