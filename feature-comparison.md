@@ -2,7 +2,7 @@
 
 此表格比較本儲存庫中不同「轉為 Markdown」使用者腳本的功能。
 
-| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.8) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) |
+| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.7) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **基本轉換** | | | | | |
 | 文字與基本格式 | ✅ | ✅ | ✅ | ✅ | ✅ |

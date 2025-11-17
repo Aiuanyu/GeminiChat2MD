@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.8
+// @version      0.7
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
@@ -19,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.8';
+    const SCRIPT_VERSION = '0.7';
 
     function addStyles() {
         const css = `
