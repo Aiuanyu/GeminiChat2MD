@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3
+// @version      0.4
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3';
+    const SCRIPT_VERSION = '0.4';
 
     function addStyles() {
         const css = `
@@ -157,10 +157,14 @@ tags: Claude
                 markdown += `## User ${userCount}\n\n${parseNode(userQuery).trim()}\n\n`;
             }
 
-            const modelResponse = turn.querySelector('.standard-markdown');
-            if (modelResponse) {
+            const modelResponses = turn.querySelectorAll('.standard-markdown');
+            if (modelResponses.length > 0) {
                 claudeCount++;
-                markdown += `## Claude ${claudeCount}\n${parseNode(modelResponse).trim()}\n\n`;
+                let claudeText = '';
+                modelResponses.forEach(response => {
+                    claudeText += parseNode(response).trim() + '\n\n';
+                });
+                markdown += `## Claude ${claudeCount}\n${claudeText.trim()}\n\n`;
             }
         });
 
