@@ -1,18 +1,23 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.5
+// @version      0.7
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.5 2025-11-17 - Added support for parsing "Artifact" blocks.
+// @history      0.4 2025-11-17 - Fixed handling of multi-part responses.
+// @history      0.3 2025-11-17 - Switched to a more reliable selector for the chat title and simplified the code.
+// @history      0.2 2025-11-17 - Fixed content extraction to include headings and moved the button to the bottom-right.
+// @history      0.1 2025-11-17 - Initial release.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.5';
+    const SCRIPT_VERSION = '0.7';
 
     function addStyles() {
         const css = `
@@ -120,6 +125,8 @@
                 const lang = langElement ? langElement.textContent.trim() : '';
                 const code = node.querySelector('code');
                 return `\n\n\`\`\`${lang}\n${code ? code.textContent.trim() : ''}\n\`\`\`\n\n`;
+            case 'a':
+                return `[${childMarkdown}](${node.href})`;
             default:
                 return childMarkdown;
         }
