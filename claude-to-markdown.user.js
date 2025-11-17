@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.2
+// @version      0.3
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
@@ -12,7 +12,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.2';
+    const SCRIPT_VERSION = '0.3';
 
     function addStyles() {
         const css = `
@@ -52,9 +52,10 @@
         document.body.appendChild(button);
     }
 
-    function getTitle(firstPromptText) {
-        if (firstPromptText) {
-            return firstPromptText.trim().substring(0, 40);
+    function getTitle() {
+        const titleElement = document.querySelector('[data-testid="chat-title-button"] .truncate');
+        if (titleElement) {
+            return titleElement.textContent.trim();
         }
         return 'claude-chat';
     }
@@ -124,7 +125,9 @@
         }
     }
 
-    function extractContent(title) {
+    function extractContent() {
+        const title = getTitle();
+
         let markdown = `---
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
@@ -141,22 +144,17 @@ tags: Claude
         const turns = document.querySelectorAll('div[data-test-render-count]');
         if (!turns || turns.length === 0) {
             console.error("Chat content not found.");
-            return { markdown: "Error: Could not find chat content.", firstPrompt: null };
+            return "Error: Could not find chat content.";
         }
 
         let userCount = 0;
         let claudeCount = 0;
-        let firstPrompt = null;
 
         turns.forEach(turn => {
             const userQuery = turn.querySelector('div[data-testid="user-message"]');
             if (userQuery) {
                 userCount++;
-                const userText = parseNode(userQuery).trim();
-                if (!firstPrompt) {
-                    firstPrompt = userText;
-                }
-                markdown += `## User ${userCount}\n\n${userText}\n\n`;
+                markdown += `## User ${userCount}\n\n${parseNode(userQuery).trim()}\n\n`;
             }
 
             const modelResponse = turn.querySelector('.standard-markdown');
@@ -166,21 +164,16 @@ tags: Claude
             }
         });
 
-        return { markdown: markdown.replace(/\n{3,}/g, '\n\n').trim(), firstPrompt };
+        return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
 
     function downloadMarkdown() {
-        const { markdown: markdownContent, firstPrompt } = extractContent("");
-        const title = getTitle(firstPrompt);
-
-        const finalMarkdown = markdownContent.replace(`title: ""`, `title: "${title}"`)
-                                           .replace(`# `, `# ${title}`);
-
-        const blob = new Blob([finalMarkdown], { type: 'text/markdown;charset=utf-8' });
+        const markdownContent = extractContent();
+        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${title}.md`;
+        a.download = `${getTitle()}.md`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
