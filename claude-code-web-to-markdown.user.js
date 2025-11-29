@@ -55,15 +55,24 @@
 
     function getTitle() {
         // Try to find the title button
-        // The main title button has 'font-base-bold' class, distinguishing it from the 'Active' session button.
-        const titleButton = document.querySelector('button[aria-haspopup="menu"].font-base-bold');
-        if (titleButton) {
-            // Clone to avoid modifying the UI or getting hidden text if any
-            const clone = titleButton.cloneNode(true);
+        // We look for buttons with 'font-base-bold' but exclude small text ones (Active session, Select repo)
+        const candidates = document.querySelectorAll('button[aria-haspopup="menu"].font-base-bold');
+
+        for (const button of candidates) {
+            // "Active" session button has 'text-xs'
+            // "Select repository" button has '!text-xs'
+            if (button.classList.contains('text-xs') || button.classList.contains('!text-xs')) {
+                continue;
+            }
+
+            // This should be the title button
+            const clone = button.cloneNode(true);
             // Remove SVG icons which might add noise
             clone.querySelectorAll('svg').forEach(svg => svg.remove());
-            return clone.textContent.trim() || 'claude-code-web';
+            const text = clone.textContent.trim();
+            if (text) return text;
         }
+
         return document.title.replace(' | Claude', '') || 'claude-code-web';
     }
 
