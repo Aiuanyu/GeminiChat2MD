@@ -55,8 +55,8 @@
 
     function getTitle() {
         // Try to find the title button
-        // Target the button inside the sticky header within the main scrollable area
-        const titleButton = document.querySelector('.flex-1.overflow-y-auto div.sticky button[aria-haspopup="menu"]');
+        // The main title button has 'font-base-bold' class, distinguishing it from the 'Active' session button.
+        const titleButton = document.querySelector('button[aria-haspopup="menu"].font-base-bold');
         if (titleButton) {
             // Clone to avoid modifying the UI or getting hidden text if any
             const clone = titleButton.cloneNode(true);
