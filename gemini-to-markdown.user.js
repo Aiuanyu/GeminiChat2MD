@@ -203,7 +203,8 @@
 parser: "Gemini to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
-tags: Gemini
+tags:
+  - Gemini
 `;
 
         if (isSharePage) {

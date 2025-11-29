@@ -68,7 +68,8 @@
 parser: "Jules to Markdown v${SCRIPT_VERSION}"
 title: "${getSanitizedTitle()}"
 url: "${window.location.href}"
-tags: Jules
+tags:
+  - Jules
 ---
 
 `;

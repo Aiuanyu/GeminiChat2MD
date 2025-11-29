@@ -241,7 +241,8 @@
 parser: "Claude Code Web to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
-tags: Claude Code Web
+tags:
+  - Claude Code Web
 ---
 
 # ${title}

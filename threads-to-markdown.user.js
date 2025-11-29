@@ -101,7 +101,8 @@
 parser: "Threads to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${profileUrl}"
-tags: ${isProfilePage ? 'Threads/profile' : 'Threads'}
+tags:
+  - ${isProfilePage ? 'Threads/profile' : 'Threads'}
 ---
 
 `;
