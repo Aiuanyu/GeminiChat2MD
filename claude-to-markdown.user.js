@@ -156,7 +156,8 @@
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
-tags: Claude
+tags:
+  - Claude
 ---
 
 # ${title}
