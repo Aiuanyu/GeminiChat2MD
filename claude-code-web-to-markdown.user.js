@@ -55,8 +55,8 @@
 
     function getTitle() {
         // Try to find the title button
-        // Target the button inside the sticky header to avoid other buttons
-        const titleButton = document.querySelector('div.sticky button[aria-haspopup="menu"]');
+        // Target the button inside the sticky header within the main scrollable area
+        const titleButton = document.querySelector('.flex-1.overflow-y-auto div.sticky button[aria-haspopup="menu"]');
         if (titleButton) {
             // Clone to avoid modifying the UI or getting hidden text if any
             const clone = titleButton.cloneNode(true);
