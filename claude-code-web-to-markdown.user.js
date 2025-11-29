@@ -55,7 +55,8 @@
 
     function getTitle() {
         // Try to find the title button
-        const titleButton = document.querySelector('button[aria-haspopup="menu"]');
+        // Target the button inside the sticky header to avoid other buttons
+        const titleButton = document.querySelector('div.sticky button[aria-haspopup="menu"]');
         if (titleButton) {
             // Clone to avoid modifying the UI or getting hidden text if any
             const clone = titleButton.cloneNode(true);
@@ -98,8 +99,6 @@
             const summary = node.querySelector('summary');
             const summaryText = summary ? summary.textContent.trim() : 'Details';
             // The content is usually in a div inside details, excluding summary
-            // But parseNode recursively handles children.
-            // We want to format this as a code block if it looks like code/output.
             // In Claude Code Web, the output is often in a div following summary.
             let contentText = '';
             Array.from(node.children).forEach(child => {
@@ -108,8 +107,8 @@
                 }
             });
 
-            // If the content is large, or looks like log, wrap in code block.
-            return `\n\n\`\`\`\n${contentText.trim()}\n\`\`\`\n\n`;
+            // Use HTML details tag but wrap content in code block for formatting
+            return `\n\n<details><summary>${summaryText}</summary>\n\n\`\`\`\n${contentText.trim()}\n\`\`\`\n</details>\n\n`;
         }
 
         let childMarkdown = '';
