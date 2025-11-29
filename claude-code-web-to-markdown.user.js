@@ -96,7 +96,11 @@
 
     function parseNode(node, listLevel = 0) {
         if (node.nodeType === Node.TEXT_NODE) {
-            return node.textContent;
+            const text = node.textContent;
+            if (text.trim() === '[Request interrupted by user]') {
+                return `> [!warn] Request interrupted by user`;
+            }
+            return text;
         }
 
         if (node.nodeType !== Node.ELEMENT_NODE) {
