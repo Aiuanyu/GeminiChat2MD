@@ -1,27 +1,28 @@
 // ==UserScript==
 // @name         GitHub Comment ID
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1
+// @version      0.2
 // @description  Displays and allows copying of the comment ID on GitHub issue and pull request pages.
 // @author       Aiuanyu
 // @match        https://github.com/*/*/issues/*
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @license      MIT
+// @history      0.2 Add error handling for clipboard and adjust CSS
 // @history      0.1 Initial release
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1';
+    const SCRIPT_VERSION = '0.2';
 
     function addStyles() {
         const css = `
             .gh-comment-id-container {
                 position: absolute;
                 top: 10px;
-                right: 55px; /* Adjusted to not overlap with the kebab menu */
+                right: 60px; /* Adjusted to not overlap with other UI elements */
                 display: flex;
                 align-items: center;
                 font-size: 12px;
@@ -30,7 +31,7 @@
                 border: 1px solid var(--color-border-default);
                 border-radius: 6px;
                 padding: 2px 6px;
-                z-index: 10;
+                z-index: 100;
                 line-height: 1;
             }
             .gh-comment-id-copy-button {
@@ -50,7 +51,7 @@
                 fill: currentColor;
             }
             .timeline-comment-header {
-                position: relative; /* Ensure the container is positioned relative to the header */
+                position: relative !important; /* Ensure the container is positioned relative to the header */
             }
         `;
         const styleSheet = document.createElement("style");
@@ -93,7 +94,11 @@
             e.stopPropagation(); // prevent triggering other click events
             navigator.clipboard.writeText(commentId).then(() => {
                 copyButton.title = 'Copied!';
-                 setTimeout(() => { copyButton.title = 'Copy Comment ID'; }, 2000);
+                setTimeout(() => { copyButton.title = 'Copy Comment ID'; }, 2000);
+            }).catch(err => {
+                console.error('Failed to copy comment ID:', err);
+                copyButton.title = 'Copy failed';
+                setTimeout(() => { copyButton.title = 'Copy Comment ID'; }, 2000);
             });
         };
         container.appendChild(copyButton);
