@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         GitHub Comment ID
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.2
+// @version      0.3
 // @description  Displays and allows copying of the comment ID on GitHub issue and pull request pages.
 // @author       Aiuanyu
 // @match        https://github.com/*/*/issues/*
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @license      MIT
+// @history      0.3 Fix UI overlap by injecting into a different element and using flexbox.
 // @history      0.2 Add error handling for clipboard and adjust CSS
 // @history      0.1 Initial release
 // ==/UserScript==
@@ -15,14 +16,11 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.2';
+    const SCRIPT_VERSION = '0.3';
 
     function addStyles() {
         const css = `
             .gh-comment-id-container {
-                position: absolute;
-                top: 10px;
-                right: 60px; /* Adjusted to not overlap with other UI elements */
                 display: flex;
                 align-items: center;
                 font-size: 12px;
@@ -31,8 +29,8 @@
                 border: 1px solid var(--color-border-default);
                 border-radius: 6px;
                 padding: 2px 6px;
-                z-index: 100;
                 line-height: 1;
+                margin-right: 8px; /* Space between ID and kebab menu */
             }
             .gh-comment-id-copy-button {
                 background: none;
@@ -49,9 +47,6 @@
             }
              .gh-comment-id-copy-button svg {
                 fill: currentColor;
-            }
-            .timeline-comment-header {
-                position: relative !important; /* Ensure the container is positioned relative to the header */
             }
         `;
         const styleSheet = document.createElement("style");
@@ -70,9 +65,9 @@
             return;
         }
 
-        const header = comment.querySelector('.timeline-comment-header');
-        if (!header) {
-            return; // No header found
+        const actionsContainer = comment.querySelector('.timeline-comment-actions');
+        if (!actionsContainer) {
+            return; // No actions container found
         }
 
         // Create the container
@@ -104,7 +99,7 @@
         container.appendChild(copyButton);
 
         // Inject the UI
-        header.appendChild(container);
+        actionsContainer.prepend(container);
     }
 
     function processAllComments() {
