@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.7
+// @version      0.8
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.8 2024-07-25 - Added a dialog to set the title before downloading.
 // @history      0.7 2025-11-17 - Added support for hyperlinks.
 // @history      0.6 2025-11-17 - Added changelog and updated feature comparison table.
 // @history      0.5 2025-11-17 - Added support for parsing "Artifact" blocks.
@@ -19,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.7';
+    const SCRIPT_VERSION = '0.8';
 
     function addStyles() {
         const css = `
@@ -65,6 +66,13 @@
             return titleElement.textContent.trim();
         }
         return 'claude-chat';
+    }
+
+    function showTitlePrompt(defaultTitle, callback) {
+        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title) {
+            callback(title);
+        }
     }
 
     function parseNode(node, listLevel = 0) {
@@ -149,9 +157,7 @@
         return markdown;
     }
 
-    function extractContent() {
-        const title = getTitle();
-
+    function extractContent(title) {
         let markdown = `---
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
@@ -201,16 +207,19 @@ tags:
     }
 
     function downloadMarkdown() {
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${getTitle()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const defaultTitle = getTitle();
+        showTitlePrompt(defaultTitle, (title) => {
+            const markdownContent = extractContent(title);
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
     }
 
     // Run the script

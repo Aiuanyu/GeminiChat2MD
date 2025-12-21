@@ -1,17 +1,18 @@
 // ==UserScript==
 // @name         Jules to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.8
+// @version      0.9
 // @description  Downloads a Jules chat log as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://jules.google.com/session/*
 // @grant        none
 // @license      MIT
+// @history      0.9 2024-07-25 - Added a dialog to set the title before downloading.
 // ==/UserScript==
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.8';
+    const SCRIPT_VERSION = '0.9';
 
     function addStyles() {
         const css = `
@@ -57,7 +58,14 @@
         return title.substring(0, 100);
     }
 
-    function extractContent() {
+    function showTitlePrompt(defaultTitle, callback) {
+        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title) {
+            callback(title);
+        }
+    }
+
+    function extractContent(title) {
         const chatContainer = document.querySelector('.chat-container .chat-history');
         if (!chatContainer) {
             console.error("Jules chat container '.chat-container .chat-history' not found.");
@@ -66,7 +74,7 @@
 
         let markdown = `---
 parser: "Jules to Markdown v${SCRIPT_VERSION}"
-title: "${getSanitizedTitle()}"
+title: "${title}"
 url: "${window.location.href}"
 tags:
   - Jules
@@ -322,16 +330,19 @@ tags:
     }
 
     function downloadMarkdown() {
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${getSanitizedTitle()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const defaultTitle = getSanitizedTitle();
+        showTitlePrompt(defaultTitle, (title) => {
+            const markdownContent = extractContent(title);
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${title}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
     }
 
     // Run the script
