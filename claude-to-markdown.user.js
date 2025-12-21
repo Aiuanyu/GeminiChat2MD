@@ -7,7 +7,7 @@
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
-// @history      0.8 2024-07-25 - Added a dialog to set the title before downloading.
+// @history      0.8 2025-12-21 - Added a dialog to set the title before downloading.
 // @history      0.7 2025-11-17 - Added support for hyperlinks.
 // @history      0.6 2025-11-17 - Added changelog and updated feature comparison table.
 // @history      0.5 2025-11-17 - Added support for parsing "Artifact" blocks.
@@ -68,11 +68,23 @@
         return 'claude-chat';
     }
 
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
     function showTitlePrompt(defaultTitle, callback) {
-        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
-        if (title) {
-            callback(title);
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
         }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
     }
 
     function parseNode(node, listLevel = 0) {
@@ -160,7 +172,7 @@
     function extractContent(title) {
         let markdown = `---
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - Claude
@@ -214,7 +226,7 @@ tags:
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${title}.md`;
+            a.download = `${sanitizeFilename(title)}.md`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

@@ -9,7 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
-// @history      0.8 2024-07-25 - Added a dialog to set the title before downloading.
+// @history      0.8 2025-12-21 - Added a dialog to set the title before downloading.
 // ==/UserScript==
 
 (function() {
@@ -67,11 +67,23 @@
         return titleElement ? titleElement.textContent.trim() : 'gemini-chat';
     }
 
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
     function showTitlePrompt(defaultTitle, callback) {
-        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
-        if (title) {
-            callback(title);
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
         }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
     }
 
     function parseFilePreview(filePreviewContainer) {
@@ -208,7 +220,7 @@
 
         let markdown = `---
 parser: "Gemini to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - Gemini
@@ -288,7 +300,7 @@ tags:
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${title}.md`;
+            a.download = `${sanitizeFilename(title)}.md`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

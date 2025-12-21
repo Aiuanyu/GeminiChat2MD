@@ -7,7 +7,7 @@
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
-// @history      0.2 2024-07-25 - Added a dialog to set the title before downloading.
+// @history      0.2 2025-12-21 - Added a dialog to set the title before downloading.
 // @history      0.1 2025-11-29 - Initial release.
 // ==/UserScript==
 
@@ -77,11 +77,23 @@
         return document.title.replace(' | Claude', '') || 'claude-code-web';
     }
 
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
     function showTitlePrompt(defaultTitle, callback) {
-        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
-        if (title) {
-            callback(title);
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
         }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
     }
 
     function parseTable(tableElement) {
@@ -258,7 +270,7 @@
     function extractContent(title) {
         let markdown = `---
 parser: "Claude Code Web to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - Claude_Code_Web
@@ -356,7 +368,7 @@ tags:
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${title}.md`;
+            a.download = `${sanitizeFilename(title)}.md`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);

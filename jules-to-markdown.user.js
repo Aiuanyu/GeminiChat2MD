@@ -7,7 +7,7 @@
 // @match        https://jules.google.com/session/*
 // @grant        none
 // @license      MIT
-// @history      0.9 2024-07-25 - Added a dialog to set the title before downloading.
+// @history      0.9 2025-12-21 - Added a dialog to set the title before downloading.
 // ==/UserScript==
 (function() {
     'use strict';
@@ -58,11 +58,23 @@
         return title.substring(0, 100);
     }
 
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
     function showTitlePrompt(defaultTitle, callback) {
-        const title = prompt("Enter the title for the Markdown file:", defaultTitle);
-        if (title) {
-            callback(title);
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
         }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
     }
 
     function extractContent(title) {
@@ -74,7 +86,7 @@
 
         let markdown = `---
 parser: "Jules to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - Jules
@@ -337,7 +349,7 @@ tags:
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${title}.md`;
+            a.download = `${sanitizeFilename(title)}.md`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
