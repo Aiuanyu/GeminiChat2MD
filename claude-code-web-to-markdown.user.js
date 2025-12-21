@@ -1,19 +1,20 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1
+// @version      0.2
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.2 2025-12-21 - Added a dialog to set the title before downloading.
 // @history      0.1 2025-11-29 - Initial release.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1';
+    const SCRIPT_VERSION = '0.2';
 
     function addStyles() {
         const css = `
@@ -74,6 +75,25 @@
         }
 
         return document.title.replace(' | Claude', '') || 'claude-code-web';
+    }
+
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
+    function showTitlePrompt(defaultTitle, callback) {
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
+        }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
     }
 
     function parseTable(tableElement) {
@@ -247,12 +267,10 @@
         return markdown + '\n\n';
     }
 
-    function extractContent() {
-        const title = getTitle();
-
+    function extractContent(title) {
         let markdown = `---
 parser: "Claude Code Web to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - Claude_Code_Web
@@ -343,16 +361,19 @@ tags:
     }
 
     function downloadMarkdown() {
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${getTitle()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const defaultTitle = getTitle();
+        showTitlePrompt(defaultTitle, (title) => {
+            const markdownContent = extractContent(title);
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sanitizeFilename(title)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
     }
 
     // Run the script

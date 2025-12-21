@@ -1,17 +1,18 @@
 // ==UserScript==
 // @name         PTT to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3
+// @version      0.4
 // @description  Downloads a PTT article and comments as a Markdown file.
 // @author       Aiuanyu & Jules
 // @match        https://www.ptt.cc/bbs/*
 // @grant        none
 // @license      MIT
+// @history      0.4 2025-12-21 - Added a dialog to set the title before downloading.
 // ==/UserScript==
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3';
+    const SCRIPT_VERSION = '0.4';
 
     function addStyles() {
         const css = `
@@ -68,7 +69,26 @@
         return 'ptt-article';
     }
 
-    function extractContent() {
+    function sanitizeFilename(name) {
+        return name.replace(/[\/\\?%*:|"<>]/g, '-');
+    }
+
+    function escapeYamlString(str) {
+        return str.replace(/"/g, '\\"');
+    }
+
+    function showTitlePrompt(defaultTitle, callback) {
+        let title = prompt("Enter the title for the Markdown file:", defaultTitle);
+        if (title === null) {
+            return; // User cancelled
+        }
+        if (title.trim() === '') {
+            title = defaultTitle;
+        }
+        callback(title);
+    }
+
+    function extractContent(title) {
         const mainContent = document.getElementById('main-content');
         if (!mainContent) {
             console.error("PTT content container '#main-content' not found.");
@@ -85,10 +105,9 @@
             }
         });
 
-        const title = meta['標題'] || getSanitizedTitle();
         markdown += `---
 parser: "PTT to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapeYamlString(title)}"
 url: "${window.location.href}"
 tags:
   - PTT
@@ -217,16 +236,19 @@ tags:
     }
 
     function downloadMarkdown() {
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${getSanitizedTitle()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const defaultTitle = getSanitizedTitle();
+        showTitlePrompt(defaultTitle, (title) => {
+            const markdownContent = extractContent(title);
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sanitizeFilename(title)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
     }
 
     // Run the script
