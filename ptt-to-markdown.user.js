@@ -90,7 +90,8 @@
 parser: "PTT to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
-tags: PTT
+tags:
+  - PTT
 ---
 
 `;

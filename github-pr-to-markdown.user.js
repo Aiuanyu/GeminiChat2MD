@@ -7,6 +7,8 @@
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @license      MIT
+// @history      0.2 Initial release with PR conversation extraction
+// @history      0.1 Development version
 // ==/UserScript==
 
 (function() {
