@@ -2,7 +2,7 @@
 
 此表格比較本儲存庫中不同「轉為 Markdown」使用者腳本的功能。
 
-| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.7) | `claude-code-web-to-markdown` (0.1) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) | `github-pr-to-markdown` (0.2) |
+| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.7) | `claude-code-web-to-markdown` (0.1) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) | `github-pr-to-markdown` (0.3) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **基本轉換** | | | | | | | |
 | 文字與基本格式 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -33,4 +33,5 @@
 | **輸出格式** | | | | | | | |
 | 檔名（非 ASCII） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Frontmatter 標題（非 ASCII） | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 下載前可設定標題 | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | 對話順序編號 | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
