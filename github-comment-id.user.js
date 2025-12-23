@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         GitHub Comment ID
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3
+// @version      0.4
 // @description  Displays and allows copying of the comment ID on GitHub issue and pull request pages.
 // @author       Aiuanyu
 // @match        https://github.com/*/*/issues/*
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @license      MIT
+// @history      0.4 Apply minor fixes from code review.
 // @history      0.3 Fix UI overlap by injecting into a different element and using flexbox.
 // @history      0.2 Add error handling for clipboard and adjust CSS
 // @history      0.1 Initial release
@@ -43,7 +44,7 @@
             .gh-comment-id-copy-button:hover {
                 color: var(--color-accent-fg);
             }
-             .gh-comment-id-copy-button svg {
+            .gh-comment-id-copy-button svg {
                 fill: currentColor;
             }
         `;
@@ -75,7 +76,7 @@
 
         // Create the ID text span
         const idSpan = document.createElement('span');
-        idSpan.textContent = `${commentId}`;
+        idSpan.textContent = commentId;
         container.appendChild(idSpan);
 
         // Create the copy button
