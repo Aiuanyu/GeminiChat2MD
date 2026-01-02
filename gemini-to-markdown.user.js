@@ -246,7 +246,7 @@ tags:
                 markdown += `## User ${userCount}\n${parseNode(userQuery).trim()}\n\n`;
             }
 
-            const modelResponse = turn.querySelector('.markdown');
+            const modelResponse = turn.querySelector('.model-response-text');
             if (modelResponse) {
                 geminiCount++;
                 markdown += `## Gemini ${geminiCount}\n`;
