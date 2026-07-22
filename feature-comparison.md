@@ -2,7 +2,7 @@
 
 此表格比較本儲存庫中不同「轉為 Markdown」使用者腳本的功能。
 
-| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.7) | `claude-code-web-to-markdown` (0.1) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) | `github-pr-to-markdown` (0.3) |
+| 功能 | `gemini-to-markdown` (0.7) | `jules-to-markdown` (0.8) | `claude-to-markdown` (0.8) | `claude-code-web-to-markdown` (0.1) | `ptt-to-markdown` (0.3) | `threads-to-markdown` (0.5) | `github-pr-to-markdown` (0.3) |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **基本轉換** | | | | | | | |
 | 文字與基本格式 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -10,11 +10,11 @@
 | 連結 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 清單 (ul, ol) | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | **特殊內容** | | | | | | | |
-| 表格 | ✅ | ❌ | ❌ | ✅ | ✅ | ❌ | ✅ |
+| 表格 | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
 | 圖片 | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | 影片 | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | 檔案附件 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| 引用內容／回覆 | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ |
+| 引用內容／回覆 | ❌ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | 聊天記錄剖析 | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | 整頁／動態牆爬取 | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | ✅ |
 | **元資料擷取** | | | | | | | |
