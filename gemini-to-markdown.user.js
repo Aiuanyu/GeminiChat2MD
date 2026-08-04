@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.8
+// @version      0.9
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.9 2026-08-04 - Fix regression where Gemini's response content was not exported on /share/ pages.
 // @history      0.8 2026-08-04 - Avoid exporting duplicate canvas content across turns in Gemini /share pages.
 // @history      0.7 2025-11-17 - Added support for shared chats and canvas content.
 // ==/UserScript==
@@ -16,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.8';
+    const SCRIPT_VERSION = '0.9';
 
     function addStyles() {
         const css = `
@@ -198,7 +199,7 @@
     }
 
     function extractContent() {
-        const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html');
+        const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
         const title = getTitle();
 
         let markdown = `---
@@ -230,7 +231,7 @@ tags:
         if (isSharePage) {
             turns = document.querySelectorAll('.chat-history share-turn-viewer');
         } else {
-            turns = document.querySelectorAll('main .conversation-container');
+            turns = document.querySelectorAll('.conversation-container');
         }
 
         if (!turns || turns.length === 0) {
@@ -293,7 +294,7 @@ tags:
                 markdown += `## User ${userCount}\n${parseNode(userQuery).trim()}\n\n`;
             }
 
-            const modelResponse = turn.querySelector('.model-response-text');
+            const modelResponse = turn.querySelector('.model-response-text') || turn.querySelector('.message-content');
             if (modelResponse) {
                 geminiCount++;
                 markdown += `## Gemini ${geminiCount}\n`;
@@ -340,7 +341,8 @@ tags:
 
     // Run the script
     const observer = new MutationObserver((mutations, obs) => {
-        const readySelector = (window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html')) ? '.chat-history' : 'main .conversation-container';
+        const isShare = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
+        const readySelector = isShare ? '.chat-history' : '.conversation-container';
         if (document.querySelector(readySelector)) {
             addStyles();
             createButton();
