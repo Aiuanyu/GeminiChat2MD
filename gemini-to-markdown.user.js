@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.7
+// @version      0.8
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,12 +9,14 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.8 2026-08-04 - Avoid exporting duplicate canvas content across turns in Gemini /share pages.
+// @history      0.7 2025-11-17 - Added support for shared chats and canvas content.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.7';
+    const SCRIPT_VERSION = '0.8';
 
     function addStyles() {
         const css = `
@@ -196,7 +198,7 @@
     }
 
     function extractContent() {
-        const isSharePage = window.location.pathname.startsWith('/share/');
+        const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html');
         const title = getTitle();
 
         let markdown = `---
@@ -239,7 +241,52 @@ tags:
         let userCount = 0;
         let geminiCount = 0;
 
-        turns.forEach(turn => {
+        // Pre-process canvas containers to identify duplicates
+        const canvasInfos = [];
+        turns.forEach((turn, index) => {
+            const canvasContainer = turn.querySelector('.immersive-artifact-container');
+            if (canvasContainer) {
+                const canvasTitle = canvasContainer.querySelector('h2.title-text');
+                const canvasContent = canvasContainer.querySelector('.immersive-artifact-content');
+                if (canvasTitle && canvasContent) {
+                    const title = canvasTitle.textContent.trim();
+                    const text = canvasContent.textContent.trim();
+                    const N = 50;
+                    const head = text.substring(0, N);
+                    const tail = text.substring(Math.max(0, text.length - N));
+                    canvasInfos.push({
+                        turnIndex: index,
+                        title: title,
+                        head: head,
+                        tail: tail,
+                        isDuplicate: false
+                    });
+                }
+            }
+        });
+
+        // Group and mark duplicate ones (except the last occurrence)
+        for (let i = 0; i < canvasInfos.length; i++) {
+            const current = canvasInfos[i];
+            let hasLaterMatching = false;
+            for (let j = i + 1; j < canvasInfos.length; j++) {
+                const later = canvasInfos[j];
+                if (current.title === later.title && current.head === later.head && current.tail === later.tail) {
+                    hasLaterMatching = true;
+                    break;
+                }
+            }
+            if (hasLaterMatching) {
+                current.isDuplicate = true;
+            }
+        }
+
+        const duplicateMap = new Map();
+        canvasInfos.forEach(info => {
+            duplicateMap.set(info.turnIndex, info.isDuplicate);
+        });
+
+        turns.forEach((turn, index) => {
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
                 userCount++;
@@ -261,11 +308,16 @@ tags:
                 const canvasTitle = canvasContainer.querySelector('h2.title-text');
                 const canvasContent = canvasContainer.querySelector('.immersive-artifact-content');
                 if (canvasTitle && canvasContent) {
+                    const isDuplicate = duplicateMap.get(index);
                     markdown += `---\n\n## ${canvasTitle.textContent.trim()}\n\n`;
-                    canvasContent.childNodes.forEach(node => {
-                        markdown += parseNode(node);
-                    });
-                    markdown += '\n\n';
+                    if (isDuplicate) {
+                        markdown += `最新版詳下\n\n`;
+                    } else {
+                        canvasContent.childNodes.forEach(node => {
+                            markdown += parseNode(node);
+                        });
+                        markdown += '\n\n';
+                    }
                 }
             }
         });
@@ -288,7 +340,7 @@ tags:
 
     // Run the script
     const observer = new MutationObserver((mutations, obs) => {
-        const readySelector = window.location.pathname.startsWith('/share/') ? '.chat-history' : 'main .conversation-container';
+        const readySelector = (window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html')) ? '.chat-history' : 'main .conversation-container';
         if (document.querySelector(readySelector)) {
             addStyles();
             createButton();
