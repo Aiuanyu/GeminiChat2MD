@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.8.1
+// @version      0.9.0
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.9.0 2026-09-18 - Implemented API-first extraction to support complete conversation retrieval with virtual scrolling (Rocksteady) DOM fallback.
 // @history      0.8.1 2026-07-22 - Switched to unified DOM selector for turns, bypassed data-test-render-count, fixed sr-only duplicate text.
 // @history      0.8 2026-07-22 - Improved title extraction, fixed missing user messages/turns, and added support for tables, blockquotes, and attachments.
 // @history      0.7 2025-11-17 - Added support for hyperlinks.
@@ -21,7 +22,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.8.1';
+    const SCRIPT_VERSION = '0.9.0';
 
     function addStyles() {
         const css = `
@@ -331,7 +332,113 @@
         return claudeText.trim();
     }
 
-    function extractContent() {
+    function getChatId() {
+        const match = window.location.pathname.match(/\/chat\/([0-9a-f-]{36})/i);
+        return match ? match[1] : null;
+    }
+
+    async function fetchConversationFromAPI(chatId) {
+        let orgId = localStorage.getItem('lastActiveOrg');
+        if (!orgId) {
+            try {
+                const orgRes = await fetch('/api/organizations', { credentials: 'include' });
+                if (orgRes.ok) {
+                    const orgs = await orgRes.json();
+                    if (Array.isArray(orgs) && orgs.length > 0) {
+                        orgId = orgs[0].uuid;
+                    }
+                }
+            } catch (e) {
+                console.warn("[Claude to Markdown] Failed to fetch organizations:", e);
+            }
+        }
+        if (!orgId) return null;
+
+        try {
+            const convRes = await fetch(`/api/organizations/${orgId}/chat_conversations/${chatId}?tree=True`, { credentials: 'include' });
+            if (convRes.ok) {
+                return await convRes.json();
+            }
+        } catch (e) {
+            console.warn("[Claude to Markdown] Failed to fetch conversation API:", e);
+        }
+        return null;
+    }
+
+    function formatAPIConversation(data) {
+        const title = (data.name && data.name.trim()) ? data.name.trim() : getTitle();
+        const escapedTitle = title.replace(/"/g, '\\"');
+
+        let markdown = `---
+parser: "Claude to Markdown v${SCRIPT_VERSION}"
+title: "${escapedTitle}"
+url: "${window.location.href}"
+tags:
+  - Claude
+---
+
+# ${title}
+
+`;
+
+        let userCount = 0;
+        let claudeCount = 0;
+
+        const messages = Array.isArray(data.chat_messages) ? data.chat_messages : [];
+        messages.forEach(msg => {
+            const isUser = msg.sender === 'human';
+            let body = '';
+
+            // Handle attachments & uploaded files
+            const files = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.files) ? msg.files : []);
+            const fileNames = files.map(f => f.file_name || f.name).filter(Boolean);
+            if (fileNames.length > 0) {
+                body += `> **Attachments:** ${fileNames.map(f => `\`${f}\``).join(', ')}\n\n`;
+            }
+
+            // Handle content blocks or plain text
+            if (Array.isArray(msg.content)) {
+                msg.content.forEach(block => {
+                    if (typeof block === 'string') {
+                        body += block.trim() + '\n\n';
+                    } else if (block && typeof block === 'object') {
+                        if (block.type === 'text' && block.text) {
+                            body += block.text.trim() + '\n\n';
+                        } else if (block.type === 'thinking' && block.thinking) {
+                            body += `<details><summary>Thinking Process</summary>\n\n${block.thinking.trim()}\n\n</details>\n\n`;
+                        } else if (block.type === 'tool_use') {
+                            const name = block.name || 'tool';
+                            const input = block.input || {};
+                            if (input.content) {
+                                body += `\`\`\`${input.language || ''}\n${input.content.trim()}\n\`\`\`\n\n`;
+                            } else {
+                                body += `> **Tool (${name}):**\n\`\`\`json\n${JSON.stringify(input, null, 2)}\n\`\`\`\n\n`;
+                            }
+                        }
+                    }
+                });
+            } else if (typeof msg.content === 'string' && msg.content.trim()) {
+                body += msg.content.trim() + '\n\n';
+            } else if (typeof msg.text === 'string' && msg.text.trim()) {
+                body += msg.text.trim() + '\n\n';
+            }
+
+            if (isUser) {
+                userCount++;
+                markdown += `## User ${userCount}\n\n${body.trim()}\n\n`;
+            } else {
+                claudeCount++;
+                markdown += `## Claude ${claudeCount}\n\n${body.trim()}\n\n`;
+            }
+        });
+
+        return {
+            title,
+            content: markdown.replace(/\n{3,}/g, '\n\n').trim()
+        };
+    }
+
+    function extractContentFromDOM() {
         const title = getTitle();
         const escapedTitle = title.replace(/"/g, '\\"');
 
@@ -352,6 +459,7 @@ tags:
             [data-testid="user-message"], 
             .font-user-message, 
             [data-user-message-bubble="true"], 
+            .cds-user-message-body,
             .font-claude-response
         `));
 
@@ -385,33 +493,71 @@ tags:
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
 
-    function downloadMarkdown() {
-        const title = getTitle();
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${sanitizeFilename(title)}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+    async function downloadMarkdown() {
+        const button = document.querySelector('.download-markdown-button');
+        const originalText = button ? button.innerText : 'MD';
+        if (button) {
+            button.innerText = '⏳';
+            button.style.pointerEvents = 'none';
+        }
+
+        try {
+            let title = getTitle();
+            let markdownContent = '';
+
+            const chatId = getChatId();
+            if (chatId) {
+                const apiData = await fetchConversationFromAPI(chatId);
+                if (apiData && Array.isArray(apiData.chat_messages) && apiData.chat_messages.length > 0) {
+                    const parsed = formatAPIConversation(apiData);
+                    title = parsed.title;
+                    markdownContent = parsed.content;
+                }
+            }
+
+            // Fallback to DOM extraction if API data was not retrieved
+            if (!markdownContent) {
+                markdownContent = extractContentFromDOM();
+            }
+
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sanitizeFilename(title)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("[Claude to Markdown] Download failed:", err);
+            alert("匯出 Markdown 失敗，請開啟 Console 檢視錯誤。");
+        } finally {
+            if (button) {
+                button.innerText = originalText;
+                button.style.pointerEvents = 'auto';
+            }
+        }
     }
 
     // Run the script
     const observer = new MutationObserver((mutations, obs) => {
-        const readySelector = '[data-testid="user-message"], .font-user-message, .font-claude-response';
+        const readySelector = '[data-testid="user-message"], .font-user-message, .font-claude-response, [data-testid="transcript-sizer"], [role="feed"]';
         if (document.querySelector(readySelector)) {
             addStyles();
             createButton();
-            obs.disconnect();
         }
     });
 
     observer.observe(document.body, {
         childList: true,
         subtree: true
+    });
+
+    // Check immediately on load
+    window.addEventListener('load', () => {
+        addStyles();
+        createButton();
     });
 
 })();
