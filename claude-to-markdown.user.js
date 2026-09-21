@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.9.0
+// @version      0.9.1
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.9.1 2026-09-21 - Demoted message headings to start from H3 (###) to prevent outline collision with turn headings (## User / ## Claude).
 // @history      0.9.0 2026-09-18 - Implemented API-first extraction to support complete conversation retrieval with virtual scrolling (Rocksteady) DOM fallback.
 // @history      0.8.1 2026-07-22 - Switched to unified DOM selector for turns, bypassed data-test-render-count, fixed sr-only duplicate text.
 // @history      0.8 2026-07-22 - Improved title extraction, fixed missing user messages/turns, and added support for tables, blockquotes, and attachments.
@@ -22,7 +23,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.9.0';
+    const SCRIPT_VERSION = '0.9.1';
 
     function addStyles() {
         const css = `
@@ -365,6 +366,45 @@
         return null;
     }
 
+    function demoteHeadings(text, targetMinLevel = 3) {
+        if (!text || typeof text !== 'string') return text;
+
+        // Split by code blocks (``` or ~~~) to protect code comments from being modified
+        const codeBlockRegex = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
+        const parts = text.split(codeBlockRegex);
+
+        // First pass: find the minimum heading level among non-code parts
+        let minLevel = 7;
+        for (let i = 0; i < parts.length; i += 2) {
+            const matches = parts[i].match(/^(#{1,6})\s+/gm);
+            if (matches) {
+                for (const m of matches) {
+                    const level = m.trim().length;
+                    if (level < minLevel) {
+                        minLevel = level;
+                    }
+                }
+            }
+        }
+
+        // If no headings found, or minimum level is already >= targetMinLevel (3)
+        if (minLevel >= 7 || minLevel >= targetMinLevel) {
+            return text;
+        }
+
+        const shift = targetMinLevel - minLevel;
+
+        // Second pass: shift headings in non-code parts
+        for (let i = 0; i < parts.length; i += 2) {
+            parts[i] = parts[i].replace(/^(#{1,6})(\s+.*)$/gm, (match, hashes, rest) => {
+                const newLevel = Math.min(6, hashes.length + shift);
+                return '#'.repeat(newLevel) + rest;
+            });
+        }
+
+        return parts.join('');
+    }
+
     function formatAPIConversation(data) {
         const title = (data.name && data.name.trim()) ? data.name.trim() : getTitle();
         const escapedTitle = title.replace(/"/g, '\\"');
@@ -423,12 +463,13 @@ tags:
                 body += msg.text.trim() + '\n\n';
             }
 
+            const cleanBody = demoteHeadings(body.trim());
             if (isUser) {
                 userCount++;
-                markdown += `## User ${userCount}\n\n${body.trim()}\n\n`;
+                markdown += `## User ${userCount}\n\n${cleanBody}\n\n`;
             } else {
                 claudeCount++;
-                markdown += `## Claude ${claudeCount}\n\n${body.trim()}\n\n`;
+                markdown += `## Claude ${claudeCount}\n\n${cleanBody}\n\n`;
             }
         });
 
@@ -476,12 +517,14 @@ tags:
             
             if (isClaude) {
                 claudeCount++;
-                markdown += `## Claude ${claudeCount}\n\n${parseClaudeTurn(el)}\n\n`;
+                const turnContent = demoteHeadings(parseClaudeTurn(el));
+                markdown += `## Claude ${claudeCount}\n\n${turnContent}\n\n`;
             } else {
                 userCount++;
                 // Find the outermost container that represents this turn to parse attachments correctly
                 const wrapper = el.closest('[data-test-render-count]') || el.closest('.group\\/message-row') || el.closest('.group') || el;
-                markdown += `## User ${userCount}\n\n${parseUserTurn(wrapper)}\n\n`;
+                const turnContent = demoteHeadings(parseUserTurn(wrapper));
+                markdown += `## User ${userCount}\n\n${turnContent}\n\n`;
             }
         });
 

@@ -16,4 +16,6 @@ If an issue title contains:
 - `[PTT]`, modify `ptt-to-markdown.user.js`.
 - `[Threads]`, modify `threads-to-markdown.user.js`.
 - `[GitHub]`, modify `github-pr-to-markdown.user.js`.
+- `[Grok]`, modify `grok-to-markdown.user.js`.
+- `[ChatGPT]`, modify `chatgpt-to-markdown.user.js`.
 - `[All]`, check all userscripts for required changes.

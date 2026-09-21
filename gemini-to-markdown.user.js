@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.9
+// @version      0.11.2
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,11 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.11.2 2026-09-21 - Filtered out screen reader accessibility labels (cdk-visually-hidden, "你說了" H5) from user queries and model responses.
+// @history      0.11.1 2026-09-21 - Fixed scroll container targeting (#chat-history, .chat-history-scroll-container) and extended RPC wait interval for auto-scrolling.
+// @history      0.11.0 2026-09-21 - Added Auto-Scroll Collector to automatically scroll up and load full conversation history before exporting.
+// @history      0.10.1 2026-09-21 - Filtered out Google Account / user profile elements from title extraction and scoped sidebar selection to conversations list.
+// @history      0.10 2026-09-21 - Improved title extraction from active sidebar conversation link and aria-label.
 // @history      0.9 2026-08-04 - Fix regression where Gemini's response content was not exported on /share/ pages.
 // @history      0.8 2026-08-04 - Avoid exporting duplicate canvas content across turns in Gemini /share pages.
 // @history      0.7 2025-11-17 - Added support for shared chats and canvas content.
@@ -17,7 +22,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.9';
+    const SCRIPT_VERSION = '0.11.2';
 
     function addStyles() {
         const css = `
@@ -28,19 +33,30 @@
                 background-color: #1a73e8;
                 color: white;
                 border: none;
-                border-radius: 50%;
-                width: 60px;
-                height: 60px;
-                font-size: 24px;
+                border-radius: 28px;
+                min-width: 56px;
+                height: 56px;
+                padding: 0 16px;
+                font-size: 16px;
+                font-weight: 600;
                 cursor: pointer;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.25);
                 z-index: 10000;
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                transition: all 0.25s ease;
+                white-space: nowrap;
+                user-select: none;
             }
             .download-markdown-button:hover {
                 background-color: #185abc;
+                box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+            }
+            .download-markdown-button:disabled {
+                background-color: #5f6368;
+                cursor: wait;
+                opacity: 0.92;
             }
         `;
         const styleSheet = document.createElement("style");
@@ -49,24 +65,92 @@
     }
 
     function createButton() {
+        if (document.querySelector('.download-markdown-button')) return;
         const button = document.createElement("button");
         button.innerText = "MD";
-        button.title = "Download as Markdown";
+        button.title = "下載為 Markdown（自動載入歷史對話）";
         button.className = "download-markdown-button";
-        button.onclick = downloadMarkdown;
+        button.onclick = () => handleExport(button);
         document.body.appendChild(button);
     }
 
+    function sanitizeFilename(title) {
+        return (title || 'gemini-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
+    }
+
+    function isValidTitle(title) {
+        if (!title || typeof title !== 'string') return false;
+        const t = title.trim();
+        if (t.length < 2) return false;
+        if (/Google\s*(?:帳[戶號]|Account)|@|會員方案|Gemini Advanced/i.test(t)) return false;
+        if (/^gemini(\.google\.com)?$/i.test(t)) return false;
+        return true;
+    }
+
     function getTitle() {
-        if (window.location.pathname.startsWith('/app/') || window.location.pathname.startsWith('/gem/')) {
-            const firstPrompt = document.querySelector('.query-text p');
-            if (firstPrompt) {
-                 return firstPrompt.textContent.trim().substring(0, 40);
+        // 1. If on /share/ page, check h1 strong
+        if (window.location.pathname.startsWith('/share/')) {
+            const shareTitleEl = document.querySelector('h1 strong, h1');
+            if (shareTitleEl && isValidTitle(shareTitleEl.textContent)) {
+                return shareTitleEl.textContent.trim();
             }
-            return 'gemini-chat';
         }
-        const titleElement = document.querySelector('h1 strong');
-        return titleElement ? titleElement.textContent.trim() : 'gemini-chat';
+
+        // 2. Active chat in sidebar - strictly scoped to conversations-list or gem-nav-list-item
+        const currentPath = window.location.pathname;
+        const chatIdMatch = currentPath.match(/\/(?:app|gem(?:\/[^\/]+)?)\/([a-zA-Z0-9_-]{8,})/);
+        const chatId = chatIdMatch ? chatIdMatch[1] : null;
+
+        if (chatId) {
+            const chatLink = document.querySelector(`conversations-list a[href*="${chatId}"], gem-nav-list-item a[href*="${chatId}"], a.gem-nav-list-item[href*="${chatId}"]`);
+            if (chatLink) {
+                const titleSpan = chatLink.querySelector('.title-text');
+                if (titleSpan && isValidTitle(titleSpan.textContent)) {
+                    return titleSpan.textContent.trim();
+                }
+                const label = chatLink.getAttribute('aria-label');
+                if (label && isValidTitle(label)) {
+                    return label.trim();
+                }
+            }
+        }
+
+        const activeLink = document.querySelector(`
+            conversations-list a.is-active,
+            conversations-list a.mdc-list-item--activated,
+            conversations-list a[aria-current="page"],
+            gem-nav-list-item[data-test-id="conversation"] a.is-active,
+            gem-nav-list-item[data-test-id="conversation"] a.mdc-list-item--activated
+        `);
+        if (activeLink) {
+            const titleSpan = activeLink.querySelector('.title-text');
+            if (titleSpan && isValidTitle(titleSpan.textContent)) {
+                return titleSpan.textContent.trim();
+            }
+            const label = activeLink.getAttribute('aria-label');
+            if (label && isValidTitle(label)) {
+                return label.trim();
+            }
+        }
+
+        // 3. Document title without "- Gemini" / "| Gemini"
+        if (document.title) {
+            const cleaned = document.title
+                .replace(/\s*[-|]\s*Gemini.*$/i, '')
+                .replace(/^Gemini\s*[-|]\s*/i, '')
+                .trim();
+            if (isValidTitle(cleaned)) {
+                return cleaned;
+            }
+        }
+
+        // 4. Fallback: First prompt
+        const firstPrompt = document.querySelector('.query-text p, .user-query-container p');
+        if (firstPrompt && firstPrompt.textContent.trim()) {
+            return firstPrompt.textContent.trim().substring(0, 50);
+        }
+
+        return 'gemini-chat';
     }
 
     function parseFilePreview(filePreviewContainer) {
@@ -100,7 +184,11 @@
             return parseFilePreview(node);
         }
 
-        if (node.classList.contains('table-footer')) {
+        if (node.classList.contains('table-footer') ||
+            node.classList.contains('cdk-visually-hidden') ||
+            node.classList.contains('screen-reader-user-query-label') ||
+            node.classList.contains('screen-reader-model-response-label') ||
+            (node.tagName.toLowerCase() === 'h5' && /^(你說了|You said)/i.test(node.textContent.trim()))) {
             return '';
         }
 
@@ -201,10 +289,11 @@
     function extractContent() {
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
         const title = getTitle();
+        const escapedTitle = title.replace(/"/g, '\\"');
 
         let markdown = `---
 parser: "Gemini to Markdown v${SCRIPT_VERSION}"
-title: "${title}"
+title: "${escapedTitle}"
 url: "${window.location.href}"
 tags:
   - Gemini
@@ -326,17 +415,145 @@ tags:
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
 
+    function findScrollableContainer() {
+        // 1. Direct Gemini chat history container ID and class
+        const geminiContainer = document.querySelector('#chat-history, .chat-history-scroll-container');
+        if (geminiContainer) {
+            return geminiContainer;
+        }
+
+        // 2. Active scrolled container with scrollTop > 0
+        const candidates = document.querySelectorAll('.chat-history-scroll-container, #chat-history, infinite-scroller, .chat-container, .main-content, main');
+        for (const el of candidates) {
+            if (el.scrollTop > 0) {
+                return el;
+            }
+        }
+
+        // 3. Parent traversal from first conversation turn
+        const firstTurn = document.querySelector('.conversation-container, user-query');
+        if (firstTurn) {
+            let el = firstTurn.parentElement;
+            while (el && el !== document.body && el !== document.documentElement) {
+                if (el.scrollHeight > el.clientHeight + 30) {
+                    return el;
+                }
+                el = el.parentElement;
+            }
+        }
+
+        return document.scrollingElement || document.documentElement || document.body;
+    }
+
+    async function autoScrollToTop(button) {
+        const scroller = findScrollableContainer();
+
+        const getTurnCount = () => document.querySelectorAll('.conversation-container').length;
+        const getFirstTurnSignature = () => {
+            const first = document.querySelector('.conversation-container');
+            return first ? (first.id || first.textContent.substring(0, 40)) : null;
+        };
+
+        const initialCount = getTurnCount();
+
+        // Perform scroll upwards
+        const triggerScrollUp = () => {
+            // 1. Scroll container directly
+            scroller.scrollTop = 0;
+            try {
+                scroller.scrollTo({ top: 0, behavior: 'smooth' });
+            } catch (e) {}
+
+            // 2. Scroll top conversation container into view
+            const topTurn = document.querySelector('.conversation-container, user-query');
+            if (topTurn && typeof topTurn.scrollIntoView === 'function') {
+                topTurn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+
+            // 3. Dispatch scroll events
+            scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+            window.dispatchEvent(new Event('scroll', { bubbles: true }));
+        };
+
+        let previousCount = initialCount;
+        let previousSignature = getFirstTurnSignature();
+        let unchangedRounds = 0;
+        const maxRounds = 60;
+        let round = 0;
+
+        while (round < maxRounds) {
+            round++;
+            triggerScrollUp();
+
+            if (button) {
+                button.innerText = `⏳ 載入中 (${previousCount})...`;
+            }
+
+            // Google batchexecute RPC needs ~1.2s to respond and render DOM
+            await new Promise(resolve => setTimeout(resolve, 1200));
+
+            const currentCount = getTurnCount();
+            const currentSignature = getFirstTurnSignature();
+
+            if (currentCount > previousCount || currentSignature !== previousSignature) {
+                unchangedRounds = 0;
+                previousCount = currentCount;
+                previousSignature = currentSignature;
+            } else {
+                unchangedRounds++;
+                // Wait for at least 2 consecutive confirmations (~2.4s) without new items to be certain
+                if (unchangedRounds >= 2) {
+                    break;
+                }
+            }
+        }
+    }
+
     function downloadMarkdown() {
+        const title = getTitle();
         const markdownContent = extractContent();
         const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${getTitle()}.md`;
+        a.download = `${sanitizeFilename(title)}.md`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+    }
+
+    let isExporting = false;
+
+    async function handleExport(button) {
+        if (isExporting) return;
+        isExporting = true;
+        button.disabled = true;
+
+        const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
+
+        try {
+            if (!isSharePage) {
+                await autoScrollToTop(button);
+            }
+            button.innerText = '✓ 下載中...';
+            downloadMarkdown();
+            button.innerText = '✓ 完成';
+            setTimeout(() => {
+                button.innerText = 'MD';
+                button.disabled = false;
+                isExporting = false;
+            }, 1800);
+        } catch (err) {
+            console.error('Gemini to Markdown export error:', err);
+            button.innerText = '⚠️ 匯出中...';
+            downloadMarkdown();
+            setTimeout(() => {
+                button.innerText = 'MD';
+                button.disabled = false;
+                isExporting = false;
+            }, 2000);
+        }
     }
 
     // Run the script
