@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.11.2
+// @version      0.11.3
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.11.3 2026-09-23 - Fixed attachment filename extraction in new Gemini UI (reading button aria-label and filename-label instead of obsolete .new-file-name class).
 // @history      0.11.2 2026-09-21 - Filtered out screen reader accessibility labels (cdk-visually-hidden, "你說了" H5) from user queries and model responses.
 // @history      0.11.1 2026-09-21 - Fixed scroll container targeting (#chat-history, .chat-history-scroll-container) and extended RPC wait interval for auto-scrolling.
 // @history      0.11.0 2026-09-21 - Added Auto-Scroll Collector to automatically scroll up and load full conversation history before exporting.
@@ -22,7 +23,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.11.2';
+    const SCRIPT_VERSION = '0.11.3';
 
     function addStyles() {
         const css = `
@@ -160,13 +161,30 @@
         }
 
         const attachments = Array.from(filePreviews).map(filePreviewElement => {
-            const fileNameElement = filePreviewElement.querySelector('.new-file-name');
-            const fileTypeElement = filePreviewElement.querySelector('.new-file-type');
-            const fileName = fileNameElement ? fileNameElement.textContent.trim() : 'unknown';
-            const fileType = fileTypeElement ? `.${fileTypeElement.textContent.trim()}` : '';
-            return `\`${fileName}${fileType}\``;
-        });
+            // 1. Try button aria-label (modern Gemini UI contains full filename e.g. "20260921-summary.md")
+            const button = filePreviewElement.querySelector('button[aria-label]');
+            const ariaLabel = button ? button.getAttribute('aria-label').trim() : '';
+            if (ariaLabel && !ariaLabel.includes('\n')) {
+                return `\`${ariaLabel}\``;
+            }
 
+            // 2. Try filename-label + file type
+            const labelEl = filePreviewElement.querySelector('[data-test-id="filename-label"], .filename-label');
+            const typeEl = filePreviewElement.querySelector('.new-file-type');
+            if (labelEl) {
+                const baseName = labelEl.textContent.trim();
+                const ext = typeEl ? `.${typeEl.textContent.trim().replace(/^\./, '')}` : '';
+                return `\`${baseName}${ext}\``;
+            }
+
+            // 3. Fallback to legacy selectors (.new-file-name, .new-file-type)
+            const fileNameElement = filePreviewElement.querySelector('.new-file-name');
+            const fileName = fileNameElement ? fileNameElement.textContent.trim() : 'unknown';
+            const fileType = typeEl ? `.${typeEl.textContent.trim().replace(/^\./, '')}` : '';
+            return `\`${fileName}${fileType}\``;
+        }).filter(Boolean);
+
+        if (attachments.length === 0) return '';
         const label = attachments.length > 1 ? 'Attachments' : 'Attachment';
         return `\n> **${label}:** ${attachments.join(', ')}\n`;
     }

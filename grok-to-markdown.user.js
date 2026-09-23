@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grok to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1.0
+// @version      0.3.0
 // @description  Converts a Grok chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://grok.com/c/*
@@ -9,13 +9,15 @@
 // @match        https://grok.com/*
 // @grant        none
 // @license      MIT
+// @history      0.3.0 2026-09-23 - Added support for file attachments extraction from user turn chip containers.
+// @history      0.2.0 2026-09-23 - Implemented Auto-Scroll & Virtual DOM Collector to handle infinite history loading and virtual scrolling.
 // @history      0.1.0 2026-09-21 - Initial release: supports Grok chat extraction, thinking process (duration & details), code blocks, tables, lists, and sidebar title matching.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1.0';
+    const SCRIPT_VERSION = '0.3.0';
 
     function addStyles() {
         if (document.getElementById('grok-to-md-styles')) return;
@@ -27,23 +29,30 @@
                 background-color: #1a73e8;
                 color: white;
                 border: none;
-                border-radius: 50%;
-                width: 60px;
-                height: 60px;
-                font-size: 24px;
+                border-radius: 28px;
+                min-width: 56px;
+                height: 56px;
+                padding: 0 16px;
+                font-size: 16px;
+                font-weight: 600;
                 cursor: pointer;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.25);
                 z-index: 10000;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                transition: background-color 0.2s, transform 0.1s;
+                transition: all 0.25s ease;
+                white-space: nowrap;
+                user-select: none;
             }
             .download-markdown-button:hover {
                 background-color: #185abc;
+                box-shadow: 0 6px 16px rgba(0,0,0,0.3);
             }
-            .download-markdown-button:active {
-                transform: scale(0.95);
+            .download-markdown-button:disabled {
+                background-color: #5f6368;
+                cursor: wait;
+                opacity: 0.92;
             }
         `;
         const styleSheet = document.createElement("style");
@@ -56,9 +65,9 @@
         if (document.querySelector('.download-markdown-button')) return;
         const button = document.createElement("button");
         button.innerText = "MD";
-        button.title = "Download as Markdown";
+        button.title = "下載為 Markdown（自動載入歷史對話）";
         button.className = "download-markdown-button";
-        button.onclick = downloadMarkdown;
+        button.onclick = () => handleExport(button);
         document.body.appendChild(button);
     }
 
@@ -265,9 +274,40 @@
         }
     }
 
-    function parseUserTurn(turnNode) {
+    function parseUserTurn(turnNode, turnWrapper) {
+        let result = '';
+
+        // Extract attachment chips if present in turnWrapper or parent container
+        const context = turnWrapper || turnNode.closest('[data-scroll-anchor-root="true"]') || turnNode.parentElement;
+        if (context) {
+            const attachmentButtons = context.querySelectorAll('button[aria-label="開啟附件"], .group\\/chip button, [class*="group/chip"] button');
+            const attachments = [];
+            attachmentButtons.forEach(btn => {
+                const labelSpan = btn.querySelector('.truncate, span');
+                const name = labelSpan ? labelSpan.textContent.trim() : btn.textContent.trim();
+                if (name && name.length < 150 && !name.includes('開啟附件') && !attachments.includes(name)) {
+                    attachments.push(name);
+                }
+            });
+            // Fallback for chips without a button wrapper
+            if (attachments.length === 0) {
+                const chips = context.querySelectorAll('.group\\/chip, [class*="group/chip"]');
+                chips.forEach(chip => {
+                    const labelSpan = chip.querySelector('.truncate, span');
+                    const name = labelSpan ? labelSpan.textContent.trim() : chip.textContent.trim();
+                    if (name && name.length < 150 && !name.includes('開啟附件') && !attachments.includes(name)) {
+                        attachments.push(name);
+                    }
+                });
+            }
+            if (attachments.length > 0) {
+                result += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
+            }
+        }
+
         const contentContainer = turnNode.querySelector('.response-content-markdown') || turnNode;
-        return parseNode(contentContainer).trim();
+        result += parseNode(contentContainer).trim();
+        return result.trim();
     }
 
     function parseGrokTurn(turnNode) {
@@ -299,7 +339,151 @@
         return result.trim();
     }
 
-    function extractContent() {
+    function findScrollContainer() {
+        // 1. Look for element containing data-scroll-anchor-root
+        const anchor = document.querySelector('[data-scroll-anchor-root="true"], [data-testid="user-message"], [data-testid="assistant-message"]');
+        if (anchor) {
+            let el = anchor.parentElement;
+            while (el && el !== document.body && el !== document.documentElement) {
+                const style = window.getComputedStyle(el);
+                if (/(auto|scroll)/i.test(style.overflowY) && el.scrollHeight > el.clientHeight) {
+                    return el;
+                }
+                el = el.parentElement;
+            }
+        }
+
+        // 2. Element with active scrollTop > 0
+        const candidates = document.querySelectorAll('div.overflow-y-auto, div[style*="overflow-y: auto"], main');
+        for (const el of candidates) {
+            if (el.scrollHeight > el.clientHeight + 40 && el.querySelector('[data-testid="user-message"], [data-testid="assistant-message"]')) {
+                return el;
+            }
+        }
+
+        return document.scrollingElement || document.documentElement || document.body;
+    }
+
+    async function collectAllTurns(button) {
+        const container = findScrollContainer();
+        const isWindow = container === document.scrollingElement || container === document.documentElement || container === document.body;
+
+        const getScrollTop = () => isWindow ? window.scrollY : container.scrollTop;
+        const setScrollTop = (val) => {
+            if (isWindow) {
+                window.scrollTo({ top: val, behavior: 'instant' });
+            } else {
+                container.scrollTop = val;
+            }
+        };
+
+        const initialScrollTop = getScrollTop();
+
+        const orderedTurns = [];
+        const seenIds = new Set();
+
+        const harvestInOrder = () => {
+            const currentDOM = Array.from(document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]'));
+            currentDOM.forEach((el, index) => {
+                const anchor = el.closest('[data-scroll-anchor-root="true"]') || el.closest('[id^="response-"]') || el;
+                const id = anchor.id || el.id || `msg-${el.getAttribute('data-testid')}-${index}-${el.textContent.slice(0, 40)}`;
+                if (!seenIds.has(id)) {
+                    seenIds.add(id);
+                    const isUser = el.getAttribute('data-testid') === 'user-message';
+                    orderedTurns.push({
+                        id,
+                        role: isUser ? 'user' : 'grok',
+                        text: isUser ? parseUserTurn(el, anchor) : parseGrokTurn(el)
+                    });
+                }
+            });
+        };
+
+        // Phase 1: Scroll up to top to trigger loading of any older history
+        let previousCount = document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]').length;
+        let unchangedRounds = 0;
+        const maxRounds = 40;
+        let round = 0;
+
+        const triggerScrollUp = () => {
+            setScrollTop(0);
+            const topTurn = document.querySelector('[data-testid="user-message"], [data-testid="assistant-message"]');
+            if (topTurn && typeof topTurn.scrollIntoView === 'function') {
+                topTurn.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+            window.dispatchEvent(new Event('scroll', { bubbles: true }));
+        };
+
+        while (round < maxRounds) {
+            round++;
+            const atTop = getScrollTop() <= 10;
+            triggerScrollUp();
+
+            if (button) {
+                const currentCount = document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]').length;
+                button.innerText = `⏳ 載入歷史中 (${currentCount})...`;
+            }
+
+            await new Promise(r => setTimeout(r, 700));
+
+            const currentCount = document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]').length;
+            if (currentCount > previousCount) {
+                unchangedRounds = 0;
+                previousCount = currentCount;
+            } else {
+                unchangedRounds++;
+                const requiredRounds = atTop ? 1 : 2;
+                if (unchangedRounds >= requiredRounds) {
+                    break;
+                }
+            }
+        }
+
+        // Phase 2: Now that we are at the top, sweep down through the chat to capture all virtualized messages in order
+        let sweepRound = 0;
+        const maxSweep = 120;
+
+        while (sweepRound < maxSweep) {
+            sweepRound++;
+            harvestInOrder();
+
+            if (button) {
+                button.innerText = `⏳ 掃描對話中 (${orderedTurns.length})...`;
+            }
+
+            const currentTop = getScrollTop();
+            const clientHeight = isWindow ? window.innerHeight : container.clientHeight;
+            const scrollHeight = isWindow ? document.documentElement.scrollHeight : container.scrollHeight;
+
+            if (currentTop >= scrollHeight - clientHeight - 20) {
+                // Reached the bottom
+                break;
+            }
+
+            // Step down by 65% of viewport
+            const nextTop = Math.min(scrollHeight - clientHeight, currentTop + clientHeight * 0.65);
+            if (nextTop <= currentTop) break;
+
+            setScrollTop(nextTop);
+            container.dispatchEvent(new Event('scroll', { bubbles: true }));
+            window.dispatchEvent(new Event('scroll', { bubbles: true }));
+
+            await new Promise(r => setTimeout(r, 250));
+        }
+
+        // Final harvest at bottom
+        harvestInOrder();
+
+        // Restore original scroll position if possible
+        try {
+            setScrollTop(initialScrollTop);
+        } catch (e) {}
+
+        return orderedTurns;
+    }
+
+    function buildMarkdownFromTurns(turns) {
         const title = getTitle();
         const escapedTitle = title.replace(/"/g, '\\"');
 
@@ -315,25 +499,16 @@ tags:
 
 `;
 
-        const container = document.querySelector('main#grok-content-area') || document;
-        const allElements = Array.from(container.querySelectorAll(`
-            [data-testid="user-message"], 
-            [data-testid="assistant-message"]
-        `));
-
         let userCount = 0;
         let grokCount = 0;
 
-        allElements.forEach(el => {
-            const isUser = el.getAttribute('data-testid') === 'user-message';
-            if (isUser) {
+        turns.forEach(turn => {
+            if (turn.role === 'user') {
                 userCount++;
-                const text = parseUserTurn(el);
-                markdown += `## User ${userCount}\n\n${text}\n\n`;
+                markdown += `## User ${userCount}\n\n${turn.text}\n\n`;
             } else {
                 grokCount++;
-                const text = parseGrokTurn(el);
-                markdown += `## Grok ${grokCount}\n\n${text}\n\n`;
+                markdown += `## Grok ${grokCount}\n\n${turn.text}\n\n`;
             }
         });
 
@@ -345,17 +520,18 @@ tags:
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
     }
 
-    function downloadMarkdown() {
-        const button = document.querySelector('.download-markdown-button');
-        const originalText = button ? button.innerText : 'MD';
-        if (button) {
-            button.innerText = '⏳';
-            button.style.pointerEvents = 'none';
-        }
+    let isExporting = false;
+
+    async function handleExport(button) {
+        if (isExporting) return;
+        isExporting = true;
+        button.disabled = true;
 
         try {
+            const turns = await collectAllTurns(button);
+            button.innerText = '✓ 下載中...';
             const title = getTitle();
-            const markdownContent = extractContent();
+            const markdownContent = buildMarkdownFromTurns(turns);
             const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -365,14 +541,20 @@ tags:
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+            button.innerText = '✓ 完成';
+            setTimeout(() => {
+                button.innerText = 'MD';
+                button.disabled = false;
+                isExporting = false;
+            }, 1800);
         } catch (err) {
-            console.error("[Grok to Markdown] Download failed:", err);
-            alert("匯出 Markdown 失敗，請開啟 Console 檢視錯誤。");
-        } finally {
-            if (button) {
-                button.innerText = originalText;
-                button.style.pointerEvents = 'auto';
-            }
+            console.error("[Grok to Markdown] Export failed:", err);
+            button.innerText = '⚠️ 匯出';
+            setTimeout(() => {
+                button.innerText = 'MD';
+                button.disabled = false;
+                isExporting = false;
+            }, 2000);
         }
     }
 

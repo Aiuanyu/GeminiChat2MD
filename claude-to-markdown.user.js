@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.9.1
+// @version      0.9.2
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.9.2 2026-09-23 - Fixed attachment extraction in new Claude UI (supporting multiple attachments, data-cds MessageAttachmentsFile, CardLink title and bdi).
 // @history      0.9.1 2026-09-21 - Demoted message headings to start from H3 (###) to prevent outline collision with turn headings (## User / ## Claude).
 // @history      0.9.0 2026-09-18 - Implemented API-first extraction to support complete conversation retrieval with virtual scrolling (Rocksteady) DOM fallback.
 // @history      0.8.1 2026-07-22 - Switched to unified DOM selector for turns, bypassed data-test-render-count, fixed sr-only duplicate text.
@@ -23,7 +24,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.9.1';
+    const SCRIPT_VERSION = '0.9.2';
 
     function addStyles() {
         const css = `
@@ -287,13 +288,39 @@
         let result = '';
 
         // Extract attachment filenames if present
-        const attachmentElements = turnNode.querySelectorAll('[aria-label*="attachment"], .bg-bg-300 .truncate, [data-testid="file-thumbnail"], .bg-bg-300');
+        const attachmentTiles = turnNode.querySelectorAll('[data-cds="MessageAttachmentsFile"], [data-testid="file-thumbnail"], [aria-label*="attachment"], .bg-bg-300 .truncate, .bg-bg-300');
         const attachments = [];
-        attachmentElements.forEach(att => {
+        attachmentTiles.forEach(att => {
             if (att.querySelector('[data-testid="user-message"]')) return;
-            const text = att.textContent.trim();
-            if (text && text.length < 100 && !attachments.includes(text) && !att.querySelector('p')) {
-                attachments.push(text);
+
+            // 1. Try CardLink title or child element with title
+            const linkWithTitle = att.querySelector('[data-cds="CardLink"][title], [title]');
+            let fileName = linkWithTitle ? linkWithTitle.getAttribute('title').trim() : '';
+
+            // 2. Try <bdi> or h3 tag
+            if (!fileName) {
+                const bdi = att.querySelector('bdi, h3');
+                if (bdi) fileName = bdi.textContent.trim();
+            }
+
+            // 3. Try aria-label (e.g. "chat-history.md, md, 287 lines")
+            if (!fileName) {
+                const ariaLabel = att.getAttribute('aria-label') || (att.querySelector('[aria-label]')?.getAttribute('aria-label'));
+                if (ariaLabel && !ariaLabel.toLowerCase().includes('message')) {
+                    fileName = ariaLabel.split(',')[0].trim();
+                }
+            }
+
+            // 4. Fallback: text content before line count or badge
+            if (!fileName) {
+                const text = att.textContent.trim();
+                if (text && text.length < 100 && !att.querySelector('p')) {
+                    fileName = text.split('\n')[0].trim();
+                }
+            }
+
+            if (fileName && fileName.length < 150 && !attachments.includes(fileName)) {
+                attachments.push(fileName);
             }
         });
 
@@ -429,9 +456,22 @@ tags:
             const isUser = msg.sender === 'human';
             let body = '';
 
-            // Handle attachments & uploaded files
-            const files = Array.isArray(msg.attachments) ? msg.attachments : (Array.isArray(msg.files) ? msg.files : []);
-            const fileNames = files.map(f => f.file_name || f.name).filter(Boolean);
+            // Handle attachments & uploaded files from all potential API fields
+            const fileNames = [];
+            const collectFileName = (obj) => {
+                if (!obj) return;
+                const name = obj.file_name || obj.name || obj.title || (obj.source && obj.source.media_type ? 'file' : null);
+                if (name && !fileNames.includes(name)) fileNames.push(name);
+            };
+            if (Array.isArray(msg.attachments)) msg.attachments.forEach(collectFileName);
+            if (Array.isArray(msg.files)) msg.files.forEach(collectFileName);
+            if (Array.isArray(msg.content)) {
+                msg.content.forEach(block => {
+                    if (block && typeof block === 'object' && (block.type === 'document' || block.type === 'file')) {
+                        collectFileName(block);
+                    }
+                });
+            }
             if (fileNames.length > 0) {
                 body += `> **Attachments:** ${fileNames.map(f => `\`${f}\``).join(', ')}\n\n`;
             }
@@ -522,7 +562,7 @@ tags:
             } else {
                 userCount++;
                 // Find the outermost container that represents this turn to parse attachments correctly
-                const wrapper = el.closest('[data-test-render-count]') || el.closest('.group\\/message-row') || el.closest('.group') || el;
+                const wrapper = el.closest('[data-testid="transcript-row"]') || el.closest('[data-test-render-count]') || el.closest('.group\\/message-row') || el.closest('.group') || el;
                 const turnContent = demoteHeadings(parseUserTurn(wrapper));
                 markdown += `## User ${userCount}\n\n${turnContent}\n\n`;
             }

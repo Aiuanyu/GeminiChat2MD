@@ -1,20 +1,21 @@
 // ==UserScript==
 // @name         ChatGPT to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1.0
+// @version      0.2.0
 // @description  Converts a ChatGPT conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
 // @license      MIT
+// @history      0.2.0 2026-09-23 - Added support for file attachments in both API (msg.metadata.attachments) and DOM (file tile and aria-label).
 // @history      0.1.0 2026-09-21 - Initial release: supports ChatGPT conversation extraction (API-first with DOM fallback), image attachments, code blocks, tables, and sidebar title matching.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1.0';
+    const SCRIPT_VERSION = '0.2.0';
 
     function addStyles() {
         if (document.getElementById('chatgpt-to-md-styles')) return;
@@ -198,6 +199,20 @@ tags:
         messages.forEach(msg => {
             const isUser = msg.author?.role === 'user';
             let body = '';
+
+            // Handle file attachments from API metadata
+            const attachments = [];
+            if (msg.metadata && Array.isArray(msg.metadata.attachments)) {
+                msg.metadata.attachments.forEach(att => {
+                    const name = att.name || att.file_name || att.title;
+                    if (name && !attachments.includes(name)) {
+                        attachments.push(name);
+                    }
+                });
+            }
+            if (attachments.length > 0) {
+                body += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
+            }
 
             const content = msg.content;
             if (content) {
@@ -387,6 +402,23 @@ tags:
 
     function parseUserTurn(turnNode) {
         let result = '';
+
+        // Extract any user file attachments
+        const fileTiles = turnNode.querySelectorAll('[role="group"][aria-label], [class*="group/file-tile"]');
+        const attachments = [];
+        fileTiles.forEach(tile => {
+            let fileName = tile.getAttribute('aria-label');
+            if (!fileName) {
+                const labelEl = tile.querySelector('.truncate.font-semibold, .font-semibold');
+                if (labelEl) fileName = labelEl.textContent.trim();
+            }
+            if (fileName && fileName.length < 150 && !attachments.includes(fileName)) {
+                attachments.push(fileName);
+            }
+        });
+        if (attachments.length > 0) {
+            result += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
+        }
 
         // Extract any user images
         const images = turnNode.querySelectorAll('img');
