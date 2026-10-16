@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         ChatGPT to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.2.0
+// @version      0.3.0
 // @description  Converts a ChatGPT conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
 // @license      MIT
+// @history      0.3.0 2026-10-16 - Supported new ChatGPT DOM structure (search-unit-keys and MarkdownRoot); added adaptive heading demotion (demoteHeadings); improved file attachment extraction for resource cards.
 // @history      0.2.0 2026-09-23 - Added support for file attachments in both API (msg.metadata.attachments) and DOM (file tile and aria-label).
 // @history      0.1.0 2026-09-21 - Initial release: supports ChatGPT conversation extraction (API-first with DOM fallback), image attachments, code blocks, tables, and sidebar title matching.
 // ==/UserScript==
@@ -15,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.2.0';
+    const SCRIPT_VERSION = '0.3.0';
 
     function addStyles() {
         if (document.getElementById('chatgpt-to-md-styles')) return;
@@ -67,6 +68,14 @@
         return match ? match[1] : null;
     }
 
+    function cleanTitle(rawTitle) {
+        if (!rawTitle || typeof rawTitle !== 'string') return '';
+        return rawTitle
+            .replace(/\s*[-|]\s*ChatGPT.*$/i, '')
+            .replace(/^ChatGPT\s*[-|]\s*/i, '')
+            .trim();
+    }
+
     function getTitle() {
         const chatId = getChatId();
 
@@ -75,17 +84,17 @@
             const sidebarLink = document.querySelector(`a[href*="${chatId}"]`);
             if (sidebarLink) {
                 const label = sidebarLink.getAttribute('aria-label');
-                if (label && label.trim()) return label.trim();
+                if (label && label.trim()) return cleanTitle(label);
 
                 const truncateEl = sidebarLink.querySelector('.truncate');
                 if (truncateEl && truncateEl.textContent.trim()) {
-                    return truncateEl.textContent.trim();
+                    return cleanTitle(truncateEl.textContent);
                 }
 
                 const clone = sidebarLink.cloneNode(true);
                 clone.querySelectorAll('svg, button').forEach(el => el.remove());
                 const text = clone.textContent.trim();
-                if (text) return text;
+                if (text) return cleanTitle(text);
             }
         }
 
@@ -93,34 +102,32 @@
         const activeLink = document.querySelector('[data-sidebar-item="true"][data-active="true"], a.bg-token-sidebar-surface-secondary');
         if (activeLink) {
             const label = activeLink.getAttribute('aria-label');
-            if (label && label.trim()) return label.trim();
+            if (label && label.trim()) return cleanTitle(label);
             const text = activeLink.textContent.trim();
-            if (text) return text;
+            if (text) return cleanTitle(text);
         }
 
         // 3. Document title (clean up "- ChatGPT", "| ChatGPT")
         if (document.title) {
-            const cleaned = document.title
-                .replace(/\s*[-|]\s*ChatGPT.*$/i, '')
-                .replace(/^ChatGPT\s*[-|]\s*/i, '')
-                .trim();
+            const cleaned = cleanTitle(document.title);
             if (cleaned && !/^chatgpt$/i.test(cleaned)) {
                 return cleaned;
             }
         }
 
         // 4. Fallback: First user message first line
-        const firstUserMsg = document.querySelector('[data-message-author-role="user"]');
+        const firstUserMsg = document.querySelector('div[data-chatgpt-search-unit-key$=":user"], div[data-content-search-unit-key$=":user"], [data-message-author-role="user"]');
         if (firstUserMsg) {
             const firstLine = firstUserMsg.textContent.trim().split('\n')[0].substring(0, 50).trim();
-            if (firstLine) return firstLine;
+            if (firstLine) return cleanTitle(firstLine);
         }
 
         return 'chatgpt-chat';
     }
 
     function sanitizeFilename(title) {
-        return (title || 'chatgpt-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
+        const cleaned = cleanTitle(title);
+        return (cleaned || 'chatgpt-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
     }
 
     async function fetchConversationFromAPI(chatId) {
@@ -235,10 +242,10 @@ tags:
 
             if (isUser) {
                 userCount++;
-                markdown += `## User ${userCount}\n\n${body.trim()}\n\n`;
+                markdown += `## User ${userCount}\n\n${demoteHeadings(body.trim())}\n\n`;
             } else {
                 assistantCount++;
-                markdown += `## ChatGPT ${assistantCount}\n\n${body.trim()}\n\n`;
+                markdown += `## ChatGPT ${assistantCount}\n\n${demoteHeadings(body.trim())}\n\n`;
             }
         });
 
@@ -400,14 +407,61 @@ tags:
         }
     }
 
+    function demoteHeadings(text, targetMinLevel = 3) {
+        if (!text || typeof text !== 'string') return text;
+
+        // Split by code blocks (``` or ~~~) to protect code comments from being modified
+        const codeBlockRegex = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
+        const parts = text.split(codeBlockRegex);
+
+        // First pass: find the minimum heading level among non-code parts
+        let minLevel = 7;
+        for (let i = 0; i < parts.length; i += 2) {
+            const matches = parts[i].match(/^(#{1,6})\s+/gm);
+            if (matches) {
+                for (const m of matches) {
+                    const level = m.trim().length;
+                    if (level < minLevel) {
+                        minLevel = level;
+                    }
+                }
+            }
+        }
+
+        // If no headings found, or minimum level is already >= targetMinLevel (3)
+        if (minLevel >= 7 || minLevel >= targetMinLevel) {
+            return text;
+        }
+
+        const shift = targetMinLevel - minLevel;
+
+        // Second pass: shift headings in non-code parts
+        for (let i = 0; i < parts.length; i += 2) {
+            parts[i] = parts[i].replace(/^(#{1,6})(\s+.*)$/gm, (match, hashes, rest) => {
+                const newLevel = Math.min(6, hashes.length + shift);
+                return '#'.repeat(newLevel) + rest;
+            });
+        }
+
+        return parts.join('');
+    }
+
     function parseUserTurn(turnNode) {
         let result = '';
 
-        // Extract any user file attachments
-        const fileTiles = turnNode.querySelectorAll('[role="group"][aria-label], [class*="group/file-tile"]');
+        // Extract any user file attachments (role group, file tile, or modern resource card)
+        const fileTiles = turnNode.querySelectorAll('[role="group"][aria-label], [class*="group/file-tile"], [class*="group/resource-card"]');
         const attachments = [];
         fileTiles.forEach(tile => {
             let fileName = tile.getAttribute('aria-label');
+            if (!fileName) {
+                const btn = tile.querySelector('button[aria-label]');
+                if (btn) fileName = btn.getAttribute('aria-label');
+            }
+            if (!fileName) {
+                const titleSpan = tile.querySelector('[title]');
+                if (titleSpan) fileName = titleSpan.getAttribute('title');
+            }
             if (!fileName) {
                 const labelEl = tile.querySelector('.truncate.font-semibold, .font-semibold');
                 if (labelEl) fileName = labelEl.textContent.trim();
@@ -431,6 +485,7 @@ tags:
         });
 
         const bubble = turnNode.querySelector('.whitespace-pre-wrap') ||
+                       turnNode.querySelector('[data-user-message-bubble="true"]') ||
                        turnNode.querySelector('[data-testid="collapsible-user-message-content"]') ||
                        turnNode;
         const text = parseNode(bubble).trim();
@@ -438,7 +493,7 @@ tags:
             result += text;
         }
 
-        return result.trim();
+        return demoteHeadings(result.trim());
     }
 
     function parseAssistantTurn(turnNode) {
@@ -453,17 +508,19 @@ tags:
             }
         }
 
-        const contentContainer = turnNode.querySelector('.markdown') || turnNode;
+        const contentContainer = turnNode.querySelector('[data-markdown-text-style="assistant-message"]') ||
+                                 turnNode.querySelector('.markdown, [class*="MarkdownRoot"]') ||
+                                 turnNode;
         const mainText = parseNode(contentContainer).trim();
         if (mainText) {
             result += mainText;
         }
 
-        return result.trim();
+        return demoteHeadings(result.trim());
     }
 
     function extractContentFromDOM() {
-        const title = getTitle();
+        const title = cleanTitle(getTitle());
         const escapedTitle = title.replace(/"/g, '\\"');
 
         let markdown = `---
@@ -478,6 +535,39 @@ tags:
 
 `;
 
+        // 1. Try modern ChatGPT search unit key selectors
+        let userTurns = Array.from(document.querySelectorAll('div[data-chatgpt-search-unit-key$=":user"], div[data-content-search-unit-key$=":user"]'));
+        userTurns = userTurns.filter(el => !el.parentElement.closest('div[data-chatgpt-search-unit-key$=":user"], div[data-content-search-unit-key$=":user"]'));
+
+        let asstTurns = Array.from(document.querySelectorAll('div[data-chatgpt-search-unit-key$=":assistant"], div[data-content-search-unit-key$=":assistant"]'));
+        asstTurns = asstTurns.filter(el => !el.parentElement.closest('div[data-chatgpt-search-unit-key$=":assistant"], div[data-content-search-unit-key$=":assistant"]'));
+
+        if (userTurns.length > 0 || asstTurns.length > 0) {
+            const allTurns = [];
+            userTurns.forEach(el => allTurns.push({ role: 'user', el }));
+            asstTurns.forEach(el => allTurns.push({ role: 'assistant', el }));
+            allTurns.sort((a, b) => {
+                const pos = a.el.compareDocumentPosition(b.el);
+                return (pos & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1;
+            });
+
+            let userCount = 0;
+            let assistantCount = 0;
+
+            allTurns.forEach(({ role, el }) => {
+                if (role === 'user') {
+                    userCount++;
+                    markdown += `## User ${userCount}\n\n${parseUserTurn(el)}\n\n`;
+                } else {
+                    assistantCount++;
+                    markdown += `## ChatGPT ${assistantCount}\n\n${parseAssistantTurn(el)}\n\n`;
+                }
+            });
+
+            return markdown.replace(/\n{3,}/g, '\n\n').trim();
+        }
+
+        // 2. Fallback to legacy selectors
         const allElements = Array.from(document.querySelectorAll(`
             [data-message-author-role="user"], 
             [data-message-author-role="assistant"]
@@ -514,7 +604,7 @@ tags:
         }
 
         try {
-            let title = getTitle();
+            let title = cleanTitle(getTitle());
             let markdownContent = '';
 
             const chatId = getChatId();
@@ -522,7 +612,7 @@ tags:
                 const apiData = await fetchConversationFromAPI(chatId);
                 if (apiData && apiData.mapping) {
                     const parsed = formatAPIConversation(apiData);
-                    title = parsed.title;
+                    title = cleanTitle(parsed.title);
                     markdownContent = parsed.content;
                 }
             }
@@ -553,7 +643,7 @@ tags:
     }
 
     const observer = new MutationObserver(() => {
-        const readySelector = '[data-message-author-role="user"], [data-message-author-role="assistant"], #prompt-textarea';
+        const readySelector = '[data-message-author-role="user"], [data-message-author-role="assistant"], #prompt-textarea, [data-chatgpt-search-unit-key], [data-user-message-bubble]';
         if (document.querySelector(readySelector)) {
             addStyles();
             createButton();

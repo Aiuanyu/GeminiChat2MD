@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.11.3
+// @version      0.12.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.12.0 2026-10-16 - Added support for H1/H2 headings in model responses with adaptive heading demotion (demoteHeadings); stripped " - Google Gemini" suffix from document title and download filename.
 // @history      0.11.3 2026-09-23 - Fixed attachment filename extraction in new Gemini UI (reading button aria-label and filename-label instead of obsolete .new-file-name class).
 // @history      0.11.2 2026-09-21 - Filtered out screen reader accessibility labels (cdk-visually-hidden, "你說了" H5) from user queries and model responses.
 // @history      0.11.1 2026-09-21 - Fixed scroll container targeting (#chat-history, .chat-history-scroll-container) and extended RPC wait interval for auto-scrolling.
@@ -23,7 +24,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.11.3';
+    const SCRIPT_VERSION = '0.12.0';
 
     function addStyles() {
         const css = `
@@ -75,8 +76,17 @@
         document.body.appendChild(button);
     }
 
+    function cleanTitle(rawTitle) {
+        if (!rawTitle || typeof rawTitle !== 'string') return '';
+        return rawTitle
+            .replace(/\s*[-|]\s*(Google\s+)?Gemini.*$/i, '')
+            .replace(/^(Google\s+)?Gemini\s*[-|]\s*/i, '')
+            .trim();
+    }
+
     function sanitizeFilename(title) {
-        return (title || 'gemini-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
+        const cleaned = cleanTitle(title);
+        return (cleaned || 'gemini-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
     }
 
     function isValidTitle(title) {
@@ -84,7 +94,7 @@
         const t = title.trim();
         if (t.length < 2) return false;
         if (/Google\s*(?:帳[戶號]|Account)|@|會員方案|Gemini Advanced/i.test(t)) return false;
-        if (/^gemini(\.google\.com)?$/i.test(t)) return false;
+        if (/^(Google\s+)?gemini(\.google\.com)?$/i.test(t)) return false;
         return true;
     }
 
@@ -92,8 +102,11 @@
         // 1. If on /share/ page, check h1 strong
         if (window.location.pathname.startsWith('/share/')) {
             const shareTitleEl = document.querySelector('h1 strong, h1');
-            if (shareTitleEl && isValidTitle(shareTitleEl.textContent)) {
-                return shareTitleEl.textContent.trim();
+            if (shareTitleEl) {
+                const cleaned = cleanTitle(shareTitleEl.textContent);
+                if (isValidTitle(cleaned)) {
+                    return cleaned;
+                }
             }
         }
 
@@ -106,12 +119,18 @@
             const chatLink = document.querySelector(`conversations-list a[href*="${chatId}"], gem-nav-list-item a[href*="${chatId}"], a.gem-nav-list-item[href*="${chatId}"]`);
             if (chatLink) {
                 const titleSpan = chatLink.querySelector('.title-text');
-                if (titleSpan && isValidTitle(titleSpan.textContent)) {
-                    return titleSpan.textContent.trim();
+                if (titleSpan) {
+                    const cleaned = cleanTitle(titleSpan.textContent);
+                    if (isValidTitle(cleaned)) {
+                        return cleaned;
+                    }
                 }
                 const label = chatLink.getAttribute('aria-label');
-                if (label && isValidTitle(label)) {
-                    return label.trim();
+                if (label) {
+                    const cleaned = cleanTitle(label);
+                    if (isValidTitle(cleaned)) {
+                        return cleaned;
+                    }
                 }
             }
         }
@@ -125,21 +144,24 @@
         `);
         if (activeLink) {
             const titleSpan = activeLink.querySelector('.title-text');
-            if (titleSpan && isValidTitle(titleSpan.textContent)) {
-                return titleSpan.textContent.trim();
+            if (titleSpan) {
+                const cleaned = cleanTitle(titleSpan.textContent);
+                if (isValidTitle(cleaned)) {
+                    return cleaned;
+                }
             }
             const label = activeLink.getAttribute('aria-label');
-            if (label && isValidTitle(label)) {
-                return label.trim();
+            if (label) {
+                const cleaned = cleanTitle(label);
+                if (isValidTitle(cleaned)) {
+                    return cleaned;
+                }
             }
         }
 
-        // 3. Document title without "- Gemini" / "| Gemini"
+        // 3. Document title without "- Google Gemini" / "- Gemini" / "| Gemini"
         if (document.title) {
-            const cleaned = document.title
-                .replace(/\s*[-|]\s*Gemini.*$/i, '')
-                .replace(/^Gemini\s*[-|]\s*/i, '')
-                .trim();
+            const cleaned = cleanTitle(document.title);
             if (isValidTitle(cleaned)) {
                 return cleaned;
             }
@@ -148,7 +170,10 @@
         // 4. Fallback: First prompt
         const firstPrompt = document.querySelector('.query-text p, .user-query-container p');
         if (firstPrompt && firstPrompt.textContent.trim()) {
-            return firstPrompt.textContent.trim().substring(0, 50);
+            const cleaned = cleanTitle(firstPrompt.textContent.trim().substring(0, 50));
+            if (isValidTitle(cleaned)) {
+                return cleaned;
+            }
         }
 
         return 'gemini-chat';
@@ -218,6 +243,10 @@
         switch (node.tagName.toLowerCase()) {
             case 'p':
                 return `\n\n${childMarkdown.trim()}`;
+            case 'h1':
+                return `\n\n# ${childMarkdown.trim()}\n\n`;
+            case 'h2':
+                return `\n\n## ${childMarkdown.trim()}\n\n`;
             case 'h3':
                 return `\n\n### ${childMarkdown.trim()}\n\n`;
             case 'h4':
@@ -304,9 +333,48 @@
         return markdown;
     }
 
+    function demoteHeadings(text, targetMinLevel = 3) {
+        if (!text || typeof text !== 'string') return text;
+
+        // Split by code blocks (``` or ~~~) to protect code comments from being modified
+        const codeBlockRegex = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
+        const parts = text.split(codeBlockRegex);
+
+        // First pass: find the minimum heading level among non-code parts
+        let minLevel = 7;
+        for (let i = 0; i < parts.length; i += 2) {
+            const matches = parts[i].match(/^(#{1,6})\s+/gm);
+            if (matches) {
+                for (const m of matches) {
+                    const level = m.trim().length;
+                    if (level < minLevel) {
+                        minLevel = level;
+                    }
+                }
+            }
+        }
+
+        // If no headings found, or minimum level is already >= targetMinLevel (3)
+        if (minLevel >= 7 || minLevel >= targetMinLevel) {
+            return text;
+        }
+
+        const shift = targetMinLevel - minLevel;
+
+        // Second pass: shift headings in non-code parts
+        for (let i = 0; i < parts.length; i += 2) {
+            parts[i] = parts[i].replace(/^(#{1,6})(\s+.*)$/gm, (match, hashes, rest) => {
+                const newLevel = Math.min(6, hashes.length + shift);
+                return '#'.repeat(newLevel) + rest;
+            });
+        }
+
+        return parts.join('');
+    }
+
     function extractContent() {
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
-        const title = getTitle();
+        const title = cleanTitle(getTitle());
         const escapedTitle = title.replace(/"/g, '\\"');
 
         let markdown = `---
@@ -326,9 +394,11 @@ tags:
         markdown += `---\n\n`;
 
         if (isSharePage) {
-            const titleElement = document.querySelector('h1 strong');
+            const titleElement = document.querySelector('h1 strong, h1');
             if (titleElement) {
-                markdown += `# ${titleElement.textContent.trim()}\n\n`;
+                markdown += `# ${cleanTitle(titleElement.textContent)}\n\n`;
+            } else {
+                markdown += `# ${title}\n\n`;
             }
         } else {
             markdown += `# ${title}\n\n`;
@@ -398,17 +468,19 @@ tags:
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
                 userCount++;
-                markdown += `## User ${userCount}\n${parseNode(userQuery).trim()}\n\n`;
+                const userText = parseNode(userQuery).trim();
+                markdown += `## User ${userCount}\n${demoteHeadings(userText)}\n\n`;
             }
 
             const modelResponse = turn.querySelector('.model-response-text') || turn.querySelector('.message-content');
             if (modelResponse) {
                 geminiCount++;
                 markdown += `## Gemini ${geminiCount}\n`;
-                 modelResponse.childNodes.forEach(node => {
-                    markdown += parseNode(node);
+                let responseText = '';
+                modelResponse.childNodes.forEach(node => {
+                    responseText += parseNode(node);
                 });
-                markdown += '\n\n';
+                markdown += demoteHeadings(responseText.trim()) + '\n\n';
             }
 
             const canvasContainer = turn.querySelector('.immersive-artifact-container');
@@ -421,10 +493,11 @@ tags:
                     if (isDuplicate) {
                         markdown += `最新版詳下\n\n`;
                     } else {
+                        let canvasText = '';
                         canvasContent.childNodes.forEach(node => {
-                            markdown += parseNode(node);
+                            canvasText += parseNode(node);
                         });
-                        markdown += '\n\n';
+                        markdown += demoteHeadings(canvasText.trim()) + '\n\n';
                     }
                 }
             }
