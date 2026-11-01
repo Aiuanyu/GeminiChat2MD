@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.13.1
+// @version      0.14.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.14.0 2026-11-01 - Rendered inline Obsidian Canvas placeholder links ([[#Title|Canvas 全文詳下]]) in conversation flow and consolidated full Canvas documents at document bottom.
 // @history      0.13.1 2026-11-01 - Filtered out Canvas container elements (immersive-entry-chip, inline-preview, gem-processing-card) during model response traversal to prevent duplicate export and UI leaks (buttons, titles).
 // @history      0.13.0 2026-11-01 - Supported modern Gemini Canvas/Artifact structures (inline-preview, gem-processing-card, immersive-editor/ProseMirror) with intelligent duplicate detection.
 // @history      0.12.0 2026-10-16 - Added support for H1/H2 headings in model responses with adaptive heading demotion (demoteHeadings); stripped " - Google Gemini" suffix from document title and download filename.
@@ -26,7 +27,9 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.13.1';
+    const SCRIPT_VERSION = '0.14.0';
+    let latestCanvasMap = new Map();
+    let currentTurnIndex = -1;
 
     function addStyles() {
         const css = `
@@ -233,8 +236,19 @@
         if (tag === 'immersive-entry-chip' ||
             tag === 'inline-preview' ||
             tag === 'gem-processing-card' ||
-            node.classList.contains('inline-preview-container') ||
-            node.classList.contains('immersive-artifact-container') ||
+            node.classList.contains('immersive-artifact-container')) {
+            const titleEl = node.querySelector('.card-title, .title, h2.title-text, h2');
+            const canvasTitle = titleEl ? titleEl.textContent.trim() : '';
+            const targetKeeper = latestCanvasMap.get(canvasTitle);
+            const isLatest = targetKeeper && targetKeeper.turnIndex === currentTurnIndex;
+            const linkText = isLatest ? 'Canvas 全文詳下' : 'Canvas 最新版詳下';
+            if (canvasTitle) {
+                return `\n\n[[#${canvasTitle}|${linkText}]]\n\n`;
+            }
+            return `\n\n[[#Canvas|${linkText}]]\n\n`;
+        }
+
+        if (node.classList.contains('inline-preview-container') ||
             node.classList.contains('table-footer') ||
             node.classList.contains('cdk-visually-hidden') ||
             node.classList.contains('screen-reader-user-query-label') ||
@@ -541,7 +555,7 @@ tags:
             });
         });
 
-        // Group by title and mark duplicates (keep the best/latest occurrence)
+        // Group by title to pick the latest/best occurrence for the appendix
         const titleGroups = new Map();
         canvasEntries.forEach(entry => {
             if (!titleGroups.has(entry.title)) {
@@ -550,10 +564,8 @@ tags:
             titleGroups.get(entry.title).push(entry);
         });
 
-        titleGroups.forEach((groupEntries) => {
-            if (groupEntries.length <= 1) return;
-
-            // Find the last entry with full content if any, otherwise the very last entry
+        latestCanvasMap.clear();
+        titleGroups.forEach((groupEntries, title) => {
             let targetKeeper = null;
             for (let i = groupEntries.length - 1; i >= 0; i--) {
                 if (groupEntries[i].hasFullContent) {
@@ -564,21 +576,13 @@ tags:
             if (!targetKeeper) {
                 targetKeeper = groupEntries[groupEntries.length - 1];
             }
-
-            // Mark all other entries with this title as duplicate
-            groupEntries.forEach(entry => {
-                if (entry !== targetKeeper) {
-                    entry.isDuplicate = true;
-                }
-            });
+            if (targetKeeper) {
+                latestCanvasMap.set(title, targetKeeper);
+            }
         });
 
-        function getCanvasDuplicateStatus(turnIndex, canvasIndex) {
-            const match = canvasEntries.find(e => e.turnIndex === turnIndex && e.canvasIndex === canvasIndex);
-            return match ? match.isDuplicate : false;
-        }
-
         turns.forEach((turn, index) => {
+            currentTurnIndex = index;
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
                 userCount++;
@@ -596,23 +600,35 @@ tags:
                 });
                 markdown += demoteHeadings(responseText.trim()) + '\n\n';
             }
+        });
 
-            const canvases = getCanvasesFromTurn(turn);
-            canvases.forEach((canvas, canvasIndex) => {
-                const isDuplicate = getCanvasDuplicateStatus(index, canvasIndex);
-                markdown += `---\n\n## ${canvas.title}\n\n`;
-                if (isDuplicate) {
-                    markdown += `最新版詳下\n\n`;
-                } else if (canvas.hasFullContent && canvas.contentEl) {
+        currentTurnIndex = -1;
+
+        // Append all unique latest Canvas documents at the very bottom
+        titleGroups.forEach((groupEntries) => {
+            let targetKeeper = null;
+            for (let i = groupEntries.length - 1; i >= 0; i--) {
+                if (groupEntries[i].hasFullContent) {
+                    targetKeeper = groupEntries[i];
+                    break;
+                }
+            }
+            if (!targetKeeper) {
+                targetKeeper = groupEntries[groupEntries.length - 1];
+            }
+
+            if (targetKeeper) {
+                markdown += `---\n\n## ${targetKeeper.title}\n\n`;
+                if (targetKeeper.hasFullContent && targetKeeper.contentEl) {
                     let canvasText = '';
-                    canvas.contentEl.childNodes.forEach(node => {
+                    targetKeeper.contentEl.childNodes.forEach(node => {
                         canvasText += parseNode(node);
                     });
                     markdown += demoteHeadings(canvasText.trim()) + '\n\n';
                 } else {
                     markdown += `（此 Canvas 於對話中未展開）\n\n`;
                 }
-            });
+            }
         });
 
         return markdown
