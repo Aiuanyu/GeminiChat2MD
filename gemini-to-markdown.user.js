@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.15.0
+// @version      0.15.1
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.15.1 2026-11-02 - Supported blockquote (>) rendering in chat and Canvas; changed unordered list marker from * to - for Obsidian Markdown compatibility.
 // @history      0.15.0 2026-11-02 - Wrapped raw non-fenced inline HTML tags across chat messages and Canvas in Markdown code format to ensure proper display in Obsidian.
 // @history      0.14.0 2026-11-01 - Rendered inline Obsidian Canvas placeholder links ([[#Title|Canvas 全文詳下]]) in conversation flow and consolidated full Canvas documents at document bottom.
 // @history      0.13.1 2026-11-01 - Filtered out Canvas container elements (immersive-entry-chip, inline-preview, gem-processing-card) during model response traversal to prevent duplicate export and UI leaks (buttons, titles).
@@ -28,7 +29,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.15.0';
+    const SCRIPT_VERSION = '0.15.1';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
 
@@ -284,12 +285,21 @@
             case 'i':
             case 'em':
                 return `*${childMarkdown}*`;
+            case 'del':
+            case 's':
+            case 'strike':
+                return `~~${childMarkdown}~~`;
+            case 'blockquote': {
+                if (!childMarkdown.trim()) return '';
+                const quoteLines = childMarkdown.trim().split('\n').map(line => line.trim() ? `> ${line}` : '>');
+                return `\n\n${quoteLines.join('\n')}\n\n`;
+            }
             case 'ul':
             case 'ol':
                 let listContent = '';
                 const indent = '    '.repeat(listLevel);
                 Array.from(node.children).forEach((li, i) => {
-                    const marker = node.tagName.toLowerCase() === 'ul' ? '*' : `${i + 1}.`;
+                    const marker = node.tagName.toLowerCase() === 'ul' ? '-' : `${i + 1}.`;
                     let liText = '';
                     let nestedList = '';
                     li.childNodes.forEach(liChild => {
@@ -307,8 +317,20 @@
                 return childMarkdown;
             case 'hr':
                 return '\n\n---\n\n';
+            case 'br':
+                return '\n';
             case 'code':
                 return node.closest('pre') ? childMarkdown : `\`${childMarkdown}\``;
+            case 'pre': {
+                const codeEl = node.querySelector('code');
+                const codeText = codeEl ? codeEl.textContent : node.textContent;
+                let lang = '';
+                if (codeEl && codeEl.className) {
+                    const match = codeEl.className.match(/(?:language-|lang-)(\w+)/);
+                    if (match) lang = match[1];
+                }
+                return `\n\n\`\`\`${lang}\n${codeText.trim()}\n\`\`\`\n\n`;
+            }
             case 'a':
                 return `[${childMarkdown}](${node.href})`;
             case 'code-block':
