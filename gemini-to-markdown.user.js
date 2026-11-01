@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.12.0
+// @version      0.13.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.13.0 2026-11-01 - Supported modern Gemini Canvas/Artifact structures (inline-preview, gem-processing-card, immersive-editor/ProseMirror) with intelligent duplicate detection.
 // @history      0.12.0 2026-10-16 - Added support for H1/H2 headings in model responses with adaptive heading demotion (demoteHeadings); stripped " - Google Gemini" suffix from document title and download filename.
 // @history      0.11.3 2026-09-23 - Fixed attachment filename extraction in new Gemini UI (reading button aria-label and filename-label instead of obsolete .new-file-name class).
 // @history      0.11.2 2026-09-21 - Filtered out screen reader accessibility labels (cdk-visually-hidden, "你說了" H5) from user queries and model responses.
@@ -24,7 +25,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.12.0';
+    const SCRIPT_VERSION = '0.13.0';
 
     function addStyles() {
         const css = `
@@ -419,50 +420,132 @@ tags:
         let userCount = 0;
         let geminiCount = 0;
 
-        // Pre-process canvas containers to identify duplicates
-        const canvasInfos = [];
-        turns.forEach((turn, index) => {
-            const canvasContainer = turn.querySelector('.immersive-artifact-container');
-            if (canvasContainer) {
-                const canvasTitle = canvasContainer.querySelector('h2.title-text');
-                const canvasContent = canvasContainer.querySelector('.immersive-artifact-content');
-                if (canvasTitle && canvasContent) {
-                    const title = canvasTitle.textContent.trim();
-                    const text = canvasContent.textContent.trim();
-                    const N = 50;
-                    const head = text.substring(0, N);
-                    const tail = text.substring(Math.max(0, text.length - N));
-                    canvasInfos.push({
-                        turnIndex: index,
+        // Helper to extract canvas info from a turn
+        function getCanvasesFromTurn(turn) {
+            const results = [];
+
+            // 1. Legacy container (.immersive-artifact-container)
+            const legacyContainers = turn.querySelectorAll('.immersive-artifact-container');
+            legacyContainers.forEach(container => {
+                const titleEl = container.querySelector('h2.title-text, h2');
+                const contentEl = container.querySelector('.immersive-artifact-content');
+                if (titleEl) {
+                    const title = titleEl.textContent.trim();
+                    results.push({
                         title: title,
-                        head: head,
-                        tail: tail,
-                        isDuplicate: false
+                        contentEl: contentEl || null,
+                        hasFullContent: !!(contentEl && contentEl.textContent.trim())
                     });
                 }
+            });
+            if (results.length > 0) return results;
+
+            // 2. Modern inline-preview
+            let previews = turn.querySelectorAll('inline-preview');
+            if (previews.length === 0) {
+                previews = turn.querySelectorAll('.inline-preview-container');
             }
+            previews.forEach(preview => {
+                const titleEl = preview.querySelector('.card-title, .title, h2');
+                const contentEl = preview.querySelector('.ProseMirror, .immersive-editor, #extended-response-markdown-content');
+                const title = titleEl ? titleEl.textContent.trim() : '';
+                if (title) {
+                    const editorEl = contentEl ? (contentEl.querySelector('.ProseMirror') || contentEl) : null;
+                    results.push({
+                        title: title,
+                        contentEl: editorEl,
+                        hasFullContent: !!(editorEl && editorEl.textContent.trim())
+                    });
+                }
+            });
+
+            // 3. Modern processing cards (e.g. gem-processing-card, immersive-entry-chip without inline-preview)
+            let procCards = turn.querySelectorAll('gem-processing-card');
+            if (procCards.length === 0) {
+                procCards = turn.querySelectorAll('immersive-entry-chip');
+            }
+            procCards.forEach(card => {
+                if (card.closest('inline-preview, .inline-preview-container')) return;
+                if (card.querySelector('inline-preview, .inline-preview-container')) return;
+
+                const titleEl = card.querySelector('.card-title, .title, h2');
+                if (titleEl) {
+                    const title = titleEl.textContent.trim();
+                    if (title && !results.some(r => r.title === title)) {
+                        results.push({
+                            title: title,
+                            contentEl: null,
+                            hasFullContent: false
+                        });
+                    }
+                }
+            });
+
+            return results;
+        }
+
+        // Pre-process canvas entries across turns to identify duplicates
+        const canvasEntries = [];
+        turns.forEach((turn, turnIndex) => {
+            const canvases = getCanvasesFromTurn(turn);
+            canvases.forEach((canvas, canvasIndex) => {
+                let head = '';
+                let tail = '';
+                if (canvas.hasFullContent && canvas.contentEl) {
+                    const text = canvas.contentEl.textContent.trim();
+                    const N = 50;
+                    head = text.substring(0, N);
+                    tail = text.substring(Math.max(0, text.length - N));
+                }
+                canvasEntries.push({
+                    turnIndex,
+                    canvasIndex,
+                    title: canvas.title,
+                    hasFullContent: canvas.hasFullContent,
+                    head,
+                    tail,
+                    contentEl: canvas.contentEl,
+                    isDuplicate: false
+                });
+            });
         });
 
-        // Group and mark duplicate ones (except the last occurrence)
-        for (let i = 0; i < canvasInfos.length; i++) {
-            const current = canvasInfos[i];
-            let hasLaterMatching = false;
-            for (let j = i + 1; j < canvasInfos.length; j++) {
-                const later = canvasInfos[j];
-                if (current.title === later.title && current.head === later.head && current.tail === later.tail) {
-                    hasLaterMatching = true;
+        // Group by title and mark duplicates (keep the best/latest occurrence)
+        const titleGroups = new Map();
+        canvasEntries.forEach(entry => {
+            if (!titleGroups.has(entry.title)) {
+                titleGroups.set(entry.title, []);
+            }
+            titleGroups.get(entry.title).push(entry);
+        });
+
+        titleGroups.forEach((groupEntries) => {
+            if (groupEntries.length <= 1) return;
+
+            // Find the last entry with full content if any, otherwise the very last entry
+            let targetKeeper = null;
+            for (let i = groupEntries.length - 1; i >= 0; i--) {
+                if (groupEntries[i].hasFullContent) {
+                    targetKeeper = groupEntries[i];
                     break;
                 }
             }
-            if (hasLaterMatching) {
-                current.isDuplicate = true;
+            if (!targetKeeper) {
+                targetKeeper = groupEntries[groupEntries.length - 1];
             }
-        }
 
-        const duplicateMap = new Map();
-        canvasInfos.forEach(info => {
-            duplicateMap.set(info.turnIndex, info.isDuplicate);
+            // Mark all other entries with this title as duplicate
+            groupEntries.forEach(entry => {
+                if (entry !== targetKeeper) {
+                    entry.isDuplicate = true;
+                }
+            });
         });
+
+        function getCanvasDuplicateStatus(turnIndex, canvasIndex) {
+            const match = canvasEntries.find(e => e.turnIndex === turnIndex && e.canvasIndex === canvasIndex);
+            return match ? match.isDuplicate : false;
+        }
 
         turns.forEach((turn, index) => {
             const userQuery = turn.querySelector('user-query');
@@ -483,24 +566,22 @@ tags:
                 markdown += demoteHeadings(responseText.trim()) + '\n\n';
             }
 
-            const canvasContainer = turn.querySelector('.immersive-artifact-container');
-            if (canvasContainer) {
-                const canvasTitle = canvasContainer.querySelector('h2.title-text');
-                const canvasContent = canvasContainer.querySelector('.immersive-artifact-content');
-                if (canvasTitle && canvasContent) {
-                    const isDuplicate = duplicateMap.get(index);
-                    markdown += `---\n\n## ${canvasTitle.textContent.trim()}\n\n`;
-                    if (isDuplicate) {
-                        markdown += `最新版詳下\n\n`;
-                    } else {
-                        let canvasText = '';
-                        canvasContent.childNodes.forEach(node => {
-                            canvasText += parseNode(node);
-                        });
-                        markdown += demoteHeadings(canvasText.trim()) + '\n\n';
-                    }
+            const canvases = getCanvasesFromTurn(turn);
+            canvases.forEach((canvas, canvasIndex) => {
+                const isDuplicate = getCanvasDuplicateStatus(index, canvasIndex);
+                markdown += `---\n\n## ${canvas.title}\n\n`;
+                if (isDuplicate) {
+                    markdown += `最新版詳下\n\n`;
+                } else if (canvas.hasFullContent && canvas.contentEl) {
+                    let canvasText = '';
+                    canvas.contentEl.childNodes.forEach(node => {
+                        canvasText += parseNode(node);
+                    });
+                    markdown += demoteHeadings(canvasText.trim()) + '\n\n';
+                } else {
+                    markdown += `（此 Canvas 於對話中未展開）\n\n`;
                 }
-            }
+            });
         });
 
         return markdown.replace(/\n{3,}/g, '\n\n').trim();
