@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.13.0
+// @version      0.13.1
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.13.1 2026-11-01 - Filtered out Canvas container elements (immersive-entry-chip, inline-preview, gem-processing-card) during model response traversal to prevent duplicate export and UI leaks (buttons, titles).
 // @history      0.13.0 2026-11-01 - Supported modern Gemini Canvas/Artifact structures (inline-preview, gem-processing-card, immersive-editor/ProseMirror) with intelligent duplicate detection.
 // @history      0.12.0 2026-10-16 - Added support for H1/H2 headings in model responses with adaptive heading demotion (demoteHeadings); stripped " - Google Gemini" suffix from document title and download filename.
 // @history      0.11.3 2026-09-23 - Fixed attachment filename extraction in new Gemini UI (reading button aria-label and filename-label instead of obsolete .new-file-name class).
@@ -25,7 +26,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.13.0';
+    const SCRIPT_VERSION = '0.13.1';
 
     function addStyles() {
         const css = `
@@ -228,11 +229,17 @@
             return parseFilePreview(node);
         }
 
-        if (node.classList.contains('table-footer') ||
+        const tag = node.tagName.toLowerCase();
+        if (tag === 'immersive-entry-chip' ||
+            tag === 'inline-preview' ||
+            tag === 'gem-processing-card' ||
+            node.classList.contains('inline-preview-container') ||
+            node.classList.contains('immersive-artifact-container') ||
+            node.classList.contains('table-footer') ||
             node.classList.contains('cdk-visually-hidden') ||
             node.classList.contains('screen-reader-user-query-label') ||
             node.classList.contains('screen-reader-model-response-label') ||
-            (node.tagName.toLowerCase() === 'h5' && /^(你說了|You said)/i.test(node.textContent.trim()))) {
+            (tag === 'h5' && /^(你說了|You said)/i.test(node.textContent.trim()))) {
             return '';
         }
 
@@ -317,21 +324,45 @@
     }
 
     function parseTable(tableElement) {
-        let markdown = '\n\n';
-        const headerRows = tableElement.querySelectorAll('thead tr');
-        headerRows.forEach(row => {
-            const headers = Array.from(row.querySelectorAll('th, td')).map(cell => parseNode(cell).trim());
-            markdown += `| ${headers.join(' | ')} |\n`;
-            markdown += `| ${headers.map(() => '---').join(' | ')} |\n`;
-        });
+        const allRows = Array.from(tableElement.querySelectorAll('tr'));
+        if (allRows.length === 0) return '';
 
-        const bodyRows = tableElement.querySelectorAll('tbody tr');
+        const getCellMarkdown = (cell) => {
+            let cellMd = '';
+            cell.childNodes.forEach(child => {
+                cellMd += parseNode(child);
+            });
+            return cellMd.trim().replace(/\r?\n+/g, ' ').replace(/\|/g, '\\|');
+        };
+
+        let markdown = '\n\n';
+        const theadRows = tableElement.querySelectorAll('thead tr');
+        let headerRow = null;
+        let bodyRows = [];
+
+        if (theadRows.length > 0) {
+            headerRow = theadRows[0];
+            bodyRows = Array.from(tableElement.querySelectorAll('tbody tr'));
+        } else {
+            headerRow = allRows[0];
+            bodyRows = allRows.slice(1);
+        }
+
+        const headerCells = Array.from(headerRow.querySelectorAll('th, td')).map(getCellMarkdown);
+        if (headerCells.length === 0) return '';
+
+        markdown += `| ${headerCells.join(' | ')} |\n`;
+        markdown += `| ${headerCells.map(() => '---').join(' | ')} |\n`;
+
         bodyRows.forEach(row => {
-            const cells = Array.from(row.querySelectorAll('td')).map(cell => parseNode(cell).trim().replace(/\|/g, '\\|'));
+            const cells = Array.from(row.querySelectorAll('th, td')).map(getCellMarkdown);
+            while (cells.length < headerCells.length) {
+                cells.push('');
+            }
             markdown += `| ${cells.join(' | ')} |\n`;
         });
 
-        return markdown;
+        return markdown + '\n';
     }
 
     function demoteHeadings(text, targetMinLevel = 3) {
@@ -584,7 +615,10 @@ tags:
             });
         });
 
-        return markdown.replace(/\n{3,}/g, '\n\n').trim();
+        return markdown
+            .replace(/(?<!`)`\./g, '`\u3000.')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
     }
 
     function findScrollableContainer() {
