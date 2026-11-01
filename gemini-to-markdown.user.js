@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.14.0
+// @version      0.15.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.15.0 2026-11-02 - Wrapped raw non-fenced inline HTML tags across chat messages and Canvas in Markdown code format to ensure proper display in Obsidian.
 // @history      0.14.0 2026-11-01 - Rendered inline Obsidian Canvas placeholder links ([[#Title|Canvas 全文詳下]]) in conversation flow and consolidated full Canvas documents at document bottom.
 // @history      0.13.1 2026-11-01 - Filtered out Canvas container elements (immersive-entry-chip, inline-preview, gem-processing-card) during model response traversal to prevent duplicate export and UI leaks (buttons, titles).
 // @history      0.13.0 2026-11-01 - Supported modern Gemini Canvas/Artifact structures (inline-preview, gem-processing-card, immersive-editor/ProseMirror) with intelligent duplicate detection.
@@ -27,7 +28,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.14.0';
+    const SCRIPT_VERSION = '0.15.0';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
 
@@ -418,6 +419,23 @@
         return parts.join('');
     }
 
+    function wrapInlineHtmlInCode(text) {
+        if (!text || typeof text !== 'string') return text;
+
+        // 1. Split text by code blocks (fenced ``` or ~~~) and existing inline code (`...`)
+        const codeBlockRegex = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
+        const parts = text.split(codeBlockRegex);
+
+        // 2. Regex for inline HTML tags or comments (exclude autolinks like <http...> or <user@...>)
+        const inlineHtmlRegex = /(<(?!\/?[a-zA-Z]+:\/\/|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\/?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^>]*?)?\/?>|<!--[\s\S]*?-->)/g;
+
+        for (let i = 0; i < parts.length; i += 2) {
+            parts[i] = parts[i].replace(inlineHtmlRegex, '`$1`');
+        }
+
+        return parts.join('');
+    }
+
     function extractContent() {
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
         const title = cleanTitle(getTitle());
@@ -631,7 +649,9 @@ tags:
             }
         });
 
-        return markdown
+        const formattedMarkdown = wrapInlineHtmlInCode(markdown);
+
+        return formattedMarkdown
             .replace(/(?<!`)`\./g, '`\u3000.')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
