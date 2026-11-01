@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.15.1
+// @version      0.15.2
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.15.2 2026-11-02 - Fixed regular expression syntax error (unterminated group) in wrapInlineHtmlInCode for GreasyFork webhook sync.
 // @history      0.15.1 2026-11-02 - Supported blockquote (>) rendering in chat and Canvas; changed unordered list marker from * to - for Obsidian Markdown compatibility.
 // @history      0.15.0 2026-11-02 - Wrapped raw non-fenced inline HTML tags across chat messages and Canvas in Markdown code format to ensure proper display in Obsidian.
 // @history      0.14.0 2026-11-01 - Rendered inline Obsidian Canvas placeholder links ([[#Title|Canvas 全文詳下]]) in conversation flow and consolidated full Canvas documents at document bottom.
@@ -29,7 +30,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.15.1';
+    const SCRIPT_VERSION = '0.15.2';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
 
@@ -449,7 +450,7 @@
         const parts = text.split(codeBlockRegex);
 
         // 2. Regex for inline HTML tags or comments (exclude autolinks like <http...> or <user@...>)
-        const inlineHtmlRegex = /(<(?!\/?[a-zA-Z]+:\/\/|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)(\/?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^>]*?)?\/?>|<!--[\s\S]*?-->)/g;
+        const inlineHtmlRegex = /(<(?!\/?[a-zA-Z]+:\/\/|[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)\/?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^>]*?)?\/?>|<!--[\s\S]*?-->)/g;
 
         for (let i = 0; i < parts.length; i += 2) {
             parts[i] = parts[i].replace(inlineHtmlRegex, '`$1`');
