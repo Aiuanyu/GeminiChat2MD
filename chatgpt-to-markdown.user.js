@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         ChatGPT to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3.0
+// @version      0.4.0
 // @description  Converts a ChatGPT conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @grant        none
 // @license      MIT
+// @history      0.4.0 2026-11-08 - Added support for ChatGPT share URLs (/share/UUID) via backend API; grouped multi-step assistant turns (thoughts, code, text) into unified turns; added progressive DOM auto-scroll collector to prevent virtual scrolling data loss; added backtick-dot Obsidian formatting protection.
 // @history      0.3.0 2026-10-16 - Supported new ChatGPT DOM structure (search-unit-keys and MarkdownRoot); added adaptive heading demotion (demoteHeadings); improved file attachment extraction for resource cards.
 // @history      0.2.0 2026-09-23 - Added support for file attachments in both API (msg.metadata.attachments) and DOM (file tile and aria-label).
 // @history      0.1.0 2026-09-21 - Initial release: supports ChatGPT conversation extraction (API-first with DOM fallback), image attachments, code blocks, tables, and sidebar title matching.
@@ -16,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3.0';
+    const SCRIPT_VERSION = '0.4.0';
 
     function addStyles() {
         if (document.getElementById('chatgpt-to-md-styles')) return;
@@ -63,9 +64,22 @@
         document.body.appendChild(button);
     }
 
+    function getConversationInfo() {
+        const path = window.location.pathname;
+        const shareMatch = path.match(/\/share\/([0-9a-f-]{36})/i);
+        if (shareMatch) {
+            return { id: shareMatch[1], isShare: true };
+        }
+        const chatMatch = path.match(/\/c\/([0-9a-f-]{36})/i);
+        if (chatMatch) {
+            return { id: chatMatch[1], isShare: false };
+        }
+        return null;
+    }
+
     function getChatId() {
-        const match = window.location.pathname.match(/\/c\/([0-9a-f-]{36})/i);
-        return match ? match[1] : null;
+        const info = getConversationInfo();
+        return info ? info.id : null;
     }
 
     function cleanTitle(rawTitle) {
@@ -77,11 +91,11 @@
     }
 
     function getTitle() {
-        const chatId = getChatId();
+        const convInfo = getConversationInfo();
 
         // 1. Sidebar link matching current chat UUID
-        if (chatId) {
-            const sidebarLink = document.querySelector(`a[href*="${chatId}"]`);
+        if (convInfo && !convInfo.isShare) {
+            const sidebarLink = document.querySelector(`a[href*="${convInfo.id}"]`);
             if (sidebarLink) {
                 const label = sidebarLink.getAttribute('aria-label');
                 if (label && label.trim()) return cleanTitle(label);
@@ -130,11 +144,12 @@
         return (cleaned || 'chatgpt-chat').replace(/[\\/:*?"<>|]/g, '_').trim();
     }
 
-    async function fetchConversationFromAPI(chatId) {
+    async function fetchConversationFromAPI(convInfo) {
+        if (!convInfo) return null;
         try {
             let accessToken = null;
             try {
-                const sessionRes = await fetch('/api/auth/session', { credentials: 'include' });
+                const sessionRes = await fetch(window.location.origin + '/api/auth/session', { credentials: 'include' });
                 if (sessionRes.ok) {
                     const sessionData = await sessionRes.json();
                     accessToken = sessionData.accessToken;
@@ -148,7 +163,11 @@
                 headers['Authorization'] = `Bearer ${accessToken}`;
             }
 
-            const convRes = await fetch(`/backend-api/conversation/${chatId}`, {
+            const endpoint = convInfo.isShare
+                ? `/backend-api/share/${convInfo.id}`
+                : `/backend-api/conversation/${convInfo.id}`;
+
+            const convRes = await fetch(window.location.origin + endpoint, {
                 credentials: 'include',
                 headers: headers
             });
@@ -187,71 +206,143 @@ tags:
             const node = mapping[currId];
             if (node.message && node.message.content && node.message.author) {
                 const role = node.message.author.role;
-                if (role === 'user' || role === 'assistant') {
+                if (role === 'user' || role === 'assistant' || role === 'tool') {
                     chain.unshift(node.message);
                 }
             }
             currId = node.parent;
         }
 
-        // If linear chain wasn't reconstructed, fall back to values of mapping
-        const messages = chain.length > 0 ? chain : Object.values(mapping)
-            .map(n => n.message)
-            .filter(m => m && (m.author?.role === 'user' || m.author?.role === 'assistant'))
-            .sort((a, b) => (a.create_time || 0) - (b.create_time || 0));
+        // If linear chain wasn't reconstructed, fall back to linear_conversation or mapping values
+        let messages = chain;
+        if (messages.length === 0 && Array.isArray(data.linear_conversation)) {
+            messages = data.linear_conversation.map(n => n.message).filter(Boolean);
+        }
+        if (messages.length === 0) {
+            messages = Object.values(mapping)
+                .map(n => n.message)
+                .filter(m => m && (m.author?.role === 'user' || m.author?.role === 'assistant'))
+                .sort((a, b) => (a.create_time || 0) - (b.create_time || 0));
+        }
 
+        // Group multi-step assistant actions into unified conversational turns
         let userCount = 0;
         let assistantCount = 0;
+        let pendingAssistant = [];
 
-        messages.forEach(msg => {
-            const isUser = msg.author?.role === 'user';
-            let body = '';
-
-            // Handle file attachments from API metadata
+        function flushAssistant() {
+            if (pendingAssistant.length === 0) return;
+            let fullBody = '';
+            let thoughts = '';
             const attachments = [];
-            if (msg.metadata && Array.isArray(msg.metadata.attachments)) {
-                msg.metadata.attachments.forEach(att => {
-                    const name = att.name || att.file_name || att.title;
-                    if (name && !attachments.includes(name)) {
-                        attachments.push(name);
-                    }
-                });
-            }
-            if (attachments.length > 0) {
-                body += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
-            }
 
-            const content = msg.content;
-            if (content) {
-                if (content.content_type === 'text' && Array.isArray(content.parts)) {
-                    body += content.parts.join('\n\n').trim();
+            pendingAssistant.forEach(msg => {
+                if (msg.metadata && Array.isArray(msg.metadata.attachments)) {
+                    msg.metadata.attachments.forEach(att => {
+                        const name = att.name || att.file_name || att.title;
+                        if (name && !attachments.includes(name)) attachments.push(name);
+                    });
+                }
+
+                const content = msg.content;
+                if (!content) return;
+
+                if (content.content_type === 'thoughts') {
+                    const text = content.text || (Array.isArray(content.parts) ? content.parts.join('\n') : '');
+                    if (text && text.trim()) {
+                        thoughts += text.trim() + '\n\n';
+                    }
+                } else if (content.content_type === 'code') {
+                    const code = content.text || (Array.isArray(content.parts) ? content.parts.join('\n') : '');
+                    if (code && code.trim()) {
+                        if (code.trim().startsWith('```')) {
+                            fullBody += `${code.trim()}\n\n`;
+                        } else {
+                            fullBody += `\`\`\`python\n${code.trim()}\n\`\`\`\n\n`;
+                        }
+                    }
+                } else if (content.content_type === 'text' && Array.isArray(content.parts)) {
+                    fullBody += content.parts.filter(p => typeof p === 'string' && p.trim()).join('\n\n') + '\n\n';
                 } else if (content.text) {
-                    body += content.text.trim();
+                    fullBody += content.text.trim() + '\n\n';
                 } else if (Array.isArray(content.parts)) {
                     content.parts.forEach(part => {
-                        if (typeof part === 'string') {
-                            body += part + '\n\n';
+                        if (typeof part === 'string' && part.trim()) {
+                            fullBody += part.trim() + '\n\n';
                         } else if (part && typeof part === 'object') {
                             if (part.content_type === 'image_asset_pointer') {
-                                body += `![image](${part.asset_pointer})\n\n`;
+                                fullBody += `![image](${part.asset_pointer})\n\n`;
                             }
                         }
                     });
                 }
+            });
+
+            let finalBody = '';
+            if (attachments.length > 0) {
+                finalBody += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
+            }
+            if (thoughts.trim()) {
+                finalBody += `<details><summary>Thinking Process</summary>\n\n${thoughts.trim()}\n\n</details>\n\n`;
+            }
+            if (fullBody.trim()) {
+                finalBody += fullBody.trim() + '\n\n';
             }
 
-            if (isUser) {
-                userCount++;
-                markdown += `## User ${userCount}\n\n${demoteHeadings(body.trim())}\n\n`;
-            } else {
+            if (finalBody.trim()) {
                 assistantCount++;
-                markdown += `## ChatGPT ${assistantCount}\n\n${demoteHeadings(body.trim())}\n\n`;
+                markdown += `## ChatGPT ${assistantCount}\n\n${demoteHeadings(finalBody.trim())}\n\n`;
+            }
+            pendingAssistant = [];
+        }
+
+        messages.forEach(msg => {
+            const role = msg.author?.role;
+            if (role === 'user') {
+                flushAssistant();
+                userCount++;
+                let userBody = '';
+
+                // Attachments
+                const attachments = [];
+                if (msg.metadata && Array.isArray(msg.metadata.attachments)) {
+                    msg.metadata.attachments.forEach(att => {
+                        const name = att.name || att.file_name || att.title;
+                        if (name && !attachments.includes(name)) attachments.push(name);
+                    });
+                }
+                if (attachments.length > 0) {
+                    userBody += `> **Attachments:** ${attachments.map(a => `\`${a}\``).join(', ')}\n\n`;
+                }
+
+                const content = msg.content;
+                if (content) {
+                    if (Array.isArray(content.parts)) {
+                        content.parts.forEach(part => {
+                            if (typeof part === 'string') {
+                                userBody += part + '\n\n';
+                            } else if (part && typeof part === 'object' && part.content_type === 'image_asset_pointer') {
+                                userBody += `![image](${part.asset_pointer})\n\n`;
+                            }
+                        });
+                    } else if (content.text) {
+                        userBody += content.text + '\n\n';
+                    }
+                }
+                markdown += `## User ${userCount}\n\n${demoteHeadings(userBody.trim())}\n\n`;
+            } else if (role === 'assistant') {
+                pendingAssistant.push(msg);
             }
         });
 
+        flushAssistant();
+
         return {
             title,
-            content: markdown.replace(/\n{3,}/g, '\n\n').trim()
+            content: markdown
+                .replace(/(?<!`)`\./g, '`\u3000.')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim()
         };
     }
 
@@ -519,7 +610,7 @@ tags:
         return demoteHeadings(result.trim());
     }
 
-    function extractContentFromDOM() {
+    async function extractContentFromDOM() {
         const title = cleanTitle(getTitle());
         const escapedTitle = title.replace(/"/g, '\\"');
 
@@ -534,6 +625,81 @@ tags:
 # ${title}
 
 `;
+
+        // Progressive auto-scroll collector to prevent virtual scrolling data loss
+        const scroller = document.querySelector('.thread-scroll-container, [class*="thread-scroll-container"]') ||
+                         document.querySelector('main div.overflow-y-auto') ||
+                         document.querySelector('div.overflow-y-auto');
+
+        if (scroller && scroller.scrollHeight > scroller.clientHeight + 300) {
+            const originalScrollTop = scroller.scrollTop;
+            const collectedUnits = new Map();
+
+            const collect = () => {
+                const searchUnits = document.querySelectorAll('div[data-chatgpt-search-unit-key], div[data-content-search-unit-key]');
+                searchUnits.forEach(el => {
+                    const key = el.getAttribute('data-chatgpt-search-unit-key') || el.getAttribute('data-content-search-unit-key');
+                    if (key && !collectedUnits.has(key)) {
+                        collectedUnits.set(key, el.cloneNode(true));
+                    }
+                });
+            };
+
+            scroller.scrollTop = 0;
+            await new Promise(r => setTimeout(r, 200));
+            collect();
+
+            const step = Math.max(300, Math.floor(scroller.clientHeight * 0.75));
+            let curr = 0;
+            while (curr < scroller.scrollHeight) {
+                curr += step;
+                scroller.scrollTop = curr;
+                await new Promise(r => setTimeout(r, 150));
+                collect();
+            }
+            scroller.scrollTop = originalScrollTop;
+
+            if (collectedUnits.size > 0) {
+                const userTurns = [];
+                const asstTurns = [];
+                collectedUnits.forEach((el, key) => {
+                    if (key.endsWith(':user')) userTurns.push(el);
+                    else if (key.endsWith(':assistant')) asstTurns.push(el);
+                });
+
+                const getTurnIndex = el => {
+                    const k = el.getAttribute('data-chatgpt-search-unit-key') || el.getAttribute('data-content-search-unit-key') || '';
+                    const m = k.match(/turn-(\d+)/);
+                    return m ? parseInt(m[1], 10) : 0;
+                };
+
+                const allTurns = [];
+                userTurns.forEach(el => allTurns.push({ role: 'user', el, idx: getTurnIndex(el) }));
+                asstTurns.forEach(el => allTurns.push({ role: 'assistant', el, idx: getTurnIndex(el) }));
+
+                allTurns.sort((a, b) => {
+                    if (a.idx !== b.idx) return a.idx - b.idx;
+                    return a.role === 'user' ? -1 : 1;
+                });
+
+                let userCount = 0;
+                let assistantCount = 0;
+                allTurns.forEach(({ role, el }) => {
+                    if (role === 'user') {
+                        userCount++;
+                        markdown += `## User ${userCount}\n\n${parseUserTurn(el)}\n\n`;
+                    } else {
+                        assistantCount++;
+                        markdown += `## ChatGPT ${assistantCount}\n\n${parseAssistantTurn(el)}\n\n`;
+                    }
+                });
+
+                return markdown
+                    .replace(/(?<!`)`\./g, '`\u3000.')
+                    .replace(/\n{3,}/g, '\n\n')
+                    .trim();
+            }
+        }
 
         // 1. Try modern ChatGPT search unit key selectors
         let userTurns = Array.from(document.querySelectorAll('div[data-chatgpt-search-unit-key$=":user"], div[data-content-search-unit-key$=":user"]'));
@@ -564,7 +730,10 @@ tags:
                 }
             });
 
-            return markdown.replace(/\n{3,}/g, '\n\n').trim();
+            return markdown
+                .replace(/(?<!`)`\./g, '`\u3000.')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
         }
 
         // 2. Fallback to legacy selectors
@@ -592,7 +761,10 @@ tags:
             return "Error: Could not find chat content.";
         }
 
-        return markdown.replace(/\n{3,}/g, '\n\n').trim();
+        return markdown
+            .replace(/(?<!`)`\./g, '`\u3000.')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
     }
 
     async function downloadMarkdown() {
@@ -607,9 +779,9 @@ tags:
             let title = cleanTitle(getTitle());
             let markdownContent = '';
 
-            const chatId = getChatId();
-            if (chatId) {
-                const apiData = await fetchConversationFromAPI(chatId);
+            const convInfo = getConversationInfo();
+            if (convInfo) {
+                const apiData = await fetchConversationFromAPI(convInfo);
                 if (apiData && apiData.mapping) {
                     const parsed = formatAPIConversation(apiData);
                     title = cleanTitle(parsed.title);
@@ -619,7 +791,7 @@ tags:
 
             // Fallback to DOM extraction
             if (!markdownContent) {
-                markdownContent = extractContentFromDOM();
+                markdownContent = await extractContentFromDOM();
             }
 
             const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
