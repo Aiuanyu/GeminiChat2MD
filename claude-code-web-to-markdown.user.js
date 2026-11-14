@@ -1,21 +1,23 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.1
+// @version      0.2.0
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.2.0 2026-11-14 - Supported 2026 Claude Code Web DOM structure (transcript-row, user-message, assistant-message, TurnStatus); added demoteHeadings; fixed button mounting observer; added Obsidian backtick-dot formatting protection.
 // @history      0.1 2025-11-29 - Initial release.
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.1';
+    const SCRIPT_VERSION = '0.2.0';
 
     function addStyles() {
+        if (document.getElementById('claude-code-web-to-md-styles')) return;
         const css = `
             .download-markdown-button {
                 position: fixed;
@@ -34,17 +36,23 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                transition: background-color 0.2s, transform 0.1s;
             }
             .download-markdown-button:hover {
                 background-color: #185abc;
             }
+            .download-markdown-button:active {
+                transform: scale(0.95);
+            }
         `;
         const styleSheet = document.createElement("style");
+        styleSheet.id = 'claude-code-web-to-md-styles';
         styleSheet.innerText = css;
         document.head.appendChild(styleSheet);
     }
 
     function createButton() {
+        if (document.querySelector('.download-markdown-button')) return;
         const button = document.createElement("button");
         button.innerText = "MD";
         button.title = "Download as Markdown";
@@ -53,37 +61,83 @@
         document.body.appendChild(button);
     }
 
+    function cleanTitle(rawTitle) {
+        if (!rawTitle || typeof rawTitle !== 'string') return '';
+        return rawTitle
+            .replace(/\s*[-—|]\s*Claude.*$/i, '')
+            .replace(/^[💬\s]+/, '')
+            .trim();
+    }
+
     function getTitle() {
-        // Try to find the title button
-        // We look for buttons with 'font-base-bold' but exclude small text ones (Active session, Select repo)
-        const candidates = document.querySelectorAll('button[aria-haspopup="menu"].font-base-bold');
-
-        for (const button of candidates) {
-            // "Active" session button has 'text-xs'
-            // "Select repository" button has '!text-xs'
-            if (button.classList.contains('text-xs') || button.classList.contains('!text-xs')) {
-                continue;
-            }
-
-            // This should be the title button
-            const clone = button.cloneNode(true);
-            // Remove SVG icons which might add noise
-            clone.querySelectorAll('svg').forEach(svg => svg.remove());
-            const text = clone.textContent.trim();
-            if (text) return text;
+        // 1. Session header heading
+        const titleH2 = document.querySelector('h2.min-w-\\[32px\\], [class*="min-w-[32px]"] h2, h2');
+        if (titleH2 && titleH2.textContent.trim()) {
+            const text = cleanTitle(titleH2.textContent.trim());
+            if (text && text !== '導覽') return text;
         }
 
-        return document.title.replace(' | Claude', '') || 'claude-code-web';
+        // 2. Document title
+        if (document.title) {
+            const cleaned = cleanTitle(document.title);
+            if (cleaned && !/^claude$/i.test(cleaned)) return cleaned;
+        }
+
+        // 3. Fallback: First user message first line
+        const firstUser = document.querySelector('[data-testid="user-message"]');
+        if (firstUser) {
+            const line = firstUser.textContent.trim().split('\n')[0].substring(0, 50).trim();
+            if (line) return cleanTitle(line);
+        }
+
+        return 'claude-code-web';
+    }
+
+    function sanitizeFilename(title) {
+        const cleaned = cleanTitle(title);
+        return (cleaned || 'claude-code-web').replace(/[\\/:*?"<>|]/g, '_').trim();
+    }
+
+    function demoteHeadings(text, targetMinLevel = 3) {
+        if (!text || typeof text !== 'string') return text;
+
+        const codeBlockRegex = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/g;
+        const parts = text.split(codeBlockRegex);
+
+        let minLevel = 7;
+        for (let i = 0; i < parts.length; i += 2) {
+            const matches = parts[i].match(/^(#{1,6})\s+/gm);
+            if (matches) {
+                for (const m of matches) {
+                    const level = m.trim().length;
+                    if (level < minLevel) minLevel = level;
+                }
+            }
+        }
+
+        if (minLevel >= 7 || minLevel >= targetMinLevel) return text;
+
+        const shift = targetMinLevel - minLevel;
+        for (let i = 0; i < parts.length; i += 2) {
+            parts[i] = parts[i].replace(/^(#{1,6})(\s+.*)$/gm, (match, hashes, rest) => {
+                const newLevel = Math.min(6, hashes.length + shift);
+                return '#'.repeat(newLevel) + rest;
+            });
+        }
+
+        return parts.join('');
     }
 
     function parseTable(tableElement) {
         let markdown = '\n\n';
         const headerRows = tableElement.querySelectorAll('thead tr');
-        headerRows.forEach(row => {
-            const headers = Array.from(row.querySelectorAll('th, td')).map(cell => parseNode(cell).trim());
-            markdown += `| ${headers.join(' | ')} |\n`;
-            markdown += `| ${headers.map(() => '---').join(' | ')} |\n`;
-        });
+        if (headerRows.length > 0) {
+            headerRows.forEach(row => {
+                const headers = Array.from(row.querySelectorAll('th, td')).map(cell => parseNode(cell).trim());
+                markdown += `| ${headers.join(' | ')} |\n`;
+                markdown += `| ${headers.map(() => '---').join(' | ')} |\n`;
+            });
+        }
 
         const bodyRows = tableElement.querySelectorAll('tbody tr');
         bodyRows.forEach(row => {
@@ -91,7 +145,18 @@
             markdown += `| ${cells.join(' | ')} |\n`;
         });
 
-        return markdown;
+        if (headerRows.length === 0 && bodyRows.length === 0) {
+            const allRows = tableElement.querySelectorAll('tr');
+            allRows.forEach((row, i) => {
+                const cells = Array.from(row.querySelectorAll('th, td')).map(cell => parseNode(cell).trim().replace(/\|/g, '\\|'));
+                markdown += `| ${cells.join(' | ')} |\n`;
+                if (i === 0) {
+                    markdown += `| ${cells.map(() => '---').join(' | ')} |\n`;
+                }
+            });
+        }
+
+        return markdown + '\n\n';
     }
 
     function parseNode(node, listLevel = 0) {
@@ -107,20 +172,23 @@
             return '';
         }
 
-        // Handle Details/Summary (Command Output)
+        if (node.classList && (node.classList.contains('sr-only') || node.classList.contains('select-none'))) {
+            return '';
+        }
+
+        if (node.tagName.toLowerCase() === 'button' || node.tagName.toLowerCase() === 'svg') {
+            return '';
+        }
+
         if (node.tagName.toLowerCase() === 'details') {
             const summary = node.querySelector('summary');
             const summaryText = summary ? summary.textContent.trim() : 'Details';
-            // The content is usually in a div inside details, excluding summary
-            // In Claude Code Web, the output is often in a div following summary.
             let contentText = '';
             Array.from(node.children).forEach(child => {
                 if (child.tagName.toLowerCase() !== 'summary') {
-                    contentText += child.textContent + '\n';
+                    contentText += parseNode(child, listLevel) + '\n';
                 }
             });
-
-            // Use HTML details tag but wrap content in code block for formatting
             return `\n\n<details><summary>${summaryText}</summary>\n\n\`\`\`\n${contentText.trim()}\n\`\`\`\n</details>\n\n`;
         }
 
@@ -129,53 +197,38 @@
             childMarkdown += parseNode(child, listLevel);
         });
 
-        // Claude Code Web Specific Classes
-        if (node.classList.contains('font-bold') && node.classList.contains('text-text-300')) {
-             // e.g. "Bash", "Read" labels
-             return `**${childMarkdown}** `;
-        }
-        if (node.classList.contains('font-mono') && node.classList.contains('text-text-500')) {
-            // e.g. command line
-            return `\`${childMarkdown}\``;
-        }
-        if (node.classList.contains('bg-bg-200') && node.classList.contains('rounded')) {
-             // inline code background
-             // Check if it's already wrapped in backticks by child processing?
-             // Often it contains a code element or span.
-             // If childMarkdown isn't already backticked, backtick it.
-             if (!childMarkdown.trim().startsWith('`')) {
-                 return `\`${childMarkdown}\``;
-             }
-             return childMarkdown;
-        }
-
         switch (node.tagName.toLowerCase()) {
             case 'p':
                 return `\n\n${childMarkdown.trim()}`;
-            case 'h1':
-                return `\n\n# ${childMarkdown.trim()}\n\n`;
-            case 'h2':
-                return `\n\n## ${childMarkdown.trim()}\n\n`;
-            case 'h3':
-                return `\n\n### ${childMarkdown.trim()}\n\n`;
-            case 'h4':
-                return `\n\n#### ${childMarkdown.trim()}\n\n`;
-            case 'h5':
-                return `\n\n##### ${childMarkdown.trim()}\n\n`;
-            case 'h6':
-                return `\n\n###### ${childMarkdown.trim()}\n\n`;
+            case 'h1': return `\n\n# ${childMarkdown.trim()}\n\n`;
+            case 'h2': return `\n\n## ${childMarkdown.trim()}\n\n`;
+            case 'h3': return `\n\n### ${childMarkdown.trim()}\n\n`;
+            case 'h4': return `\n\n#### ${childMarkdown.trim()}\n\n`;
+            case 'h5': return `\n\n##### ${childMarkdown.trim()}\n\n`;
+            case 'h6': return `\n\n###### ${childMarkdown.trim()}\n\n`;
             case 'strong':
             case 'b':
                 return `**${childMarkdown}**`;
             case 'em':
             case 'i':
                 return `*${childMarkdown}*`;
+            case 'del':
+            case 's':
+            case 'strike':
+                return `~~${childMarkdown}~~`;
+            case 'blockquote': {
+                if (!childMarkdown.trim()) return '';
+                const quoteLines = childMarkdown.trim().split('\n').map(line => line.trim() ? `> ${line}` : '>');
+                return `\n\n${quoteLines.join('\n')}\n\n`;
+            }
+            case 'hr': return '\n\n---\n\n';
+            case 'br': return '\n';
             case 'ul':
             case 'ol':
                 let listContent = '';
                 const indent = '    '.repeat(listLevel);
                 Array.from(node.children).forEach((li, i) => {
-                    const marker = node.tagName.toLowerCase() === 'ul' ? '*' : `${i + 1}.`;
+                    const marker = node.tagName.toLowerCase() === 'ul' ? '-' : `${i + 1}.`;
                     let liText = '';
                     let nestedList = '';
                     li.childNodes.forEach(liChild => {
@@ -189,62 +242,23 @@
                     listContent += `\n${indent}${marker} ${liText}${nestedList}`;
                 });
                 return listContent;
-            case 'li':
-                return childMarkdown;
+            case 'li': return childMarkdown;
             case 'code':
                 return node.closest('pre') ? childMarkdown : `\`${childMarkdown}\``;
-            case 'pre':
-                const langClass = node.className || '';
-                // Try to extract language from class or context if possible,
-                // but standard simple code block is fine.
-                return `\n\n\`\`\`\n${childMarkdown.trim()}\n\`\`\`\n\n`;
-            case 'table':
-                return parseTable(node);
-            case 'a':
-                return `[${childMarkdown}](${node.href})`;
-            default:
-                return childMarkdown;
-        }
-    }
-
-    function parseStep(stepNode) {
-        // Structure: div.flex.items-start.gap-1.text-sm
-        // It has a dot (●) and content.
-        const contentDiv = stepNode.querySelector('.break-words.min-w-0.flex-1');
-        if (!contentDiv) return parseNode(stepNode);
-
-        // Check if it's a command execution
-        const commandDiv = contentDiv.querySelector('.flex.flex-col.gap-1');
-
-        let markdown = '> '; // Use blockquote for steps
-
-        if (commandDiv) {
-            // It's likely a command
-            // The first child is usually the command line
-            const commandLine = commandDiv.firstElementChild;
-            if (commandLine) {
-                 markdown += parseNode(commandLine).trim() + '\n';
-            }
-
-            // Subsequent children are output/details
-            const outputs = Array.from(commandDiv.children).slice(1);
-            outputs.forEach(output => {
-                // Check for the "└" symbol which indicates output
-                if (output.textContent.includes('└')) {
-                     // The actual output content is usually next to the └ symbol or inside
-                     // We can just parse the whole thing, it should handle details/summary
-                     const outputText = parseNode(output).replace('└', '').trim();
-                     markdown += '> ' + outputText.replace(/\n/g, '\n> ') + '\n';
-                } else {
-                     markdown += '> ' + parseNode(output).replace(/\n/g, '\n> ') + '\n';
+            case 'pre': {
+                const codeEl = node.querySelector('code');
+                const codeText = codeEl ? codeEl.textContent : node.textContent;
+                let lang = '';
+                if (codeEl && codeEl.className) {
+                    const match = codeEl.className.match(/(?:language-|lang-)(\w+)/);
+                    if (match) lang = match[1];
                 }
-            });
-        } else {
-            // Just text log
-            markdown += parseNode(contentDiv).replace(/\n/g, '\n> ');
+                return `\n\n\`\`\`${lang}\n${codeText.trim()}\n\`\`\`\n\n`;
+            }
+            case 'table': return parseTable(node);
+            case 'a': return `[${childMarkdown}](${node.href})`;
+            default: return childMarkdown;
         }
-
-        return markdown + '\n\n';
     }
 
     function extractContent() {
@@ -262,113 +276,113 @@ tags:
 
 `;
 
-        // Find the main chat container
-        // We look for a Claude message bubble class `px-3 mb-1` and get its parent's parent usually
-        // But the structure is: Container > Turn > Bubble
-        // Claude Turn: div.px-3.mb-1 (This IS the turn container for Claude?)
-        // User Turn: div.flex.flex-col.gap-2 (This IS the turn container for User?)
-        // Let's verify with the provided HTML snippet.
-        // <div class="flex flex-col gap-4"> (Main)
-        //   <div class="flex flex-col gap-2"> (User Turn) ... </div>
-        //   <div class="px-3 mb-1"> (Claude Turn) ... </div>
-        // </div>
-
-        // So we need to find the container that holds these.
-        // We can search for all `div.px-3.mb-1` and find the common parent.
-        const claudeTurns = document.querySelectorAll('div.px-3.mb-1');
-        let container = null;
-        if (claudeTurns.length > 0) {
-            container = claudeTurns[0].parentElement;
-        } else {
-            // Maybe only user messages exist?
-            const userTurns = document.querySelectorAll('div.flex.flex-col.gap-2');
-            if (userTurns.length > 0) {
-                // This selector is very generic, verify if it has the specific user bubble inside
-                // User Bubble: div.bg-bg-200.rounded-lg.px-3.py-2.font-base.text-text-000
-                for (let i = 0; i < userTurns.length; i++) {
-                    if (userTurns[i].querySelector('div.bg-bg-200.rounded-lg.px-3.py-2.font-base.text-text-000')) {
-                        container = userTurns[i].parentElement;
-                        break;
-                    }
-                }
-            }
+        let rows = Array.from(document.querySelectorAll('[data-testid="transcript-row"]'));
+        if (rows.length === 0) {
+            rows = Array.from(document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]'));
         }
 
-        if (!container) {
-            console.error("Chat content not found.");
+        if (rows.length === 0) {
+            console.error("[Claude Code Web to Markdown] Chat content not found.");
             return "Error: Could not find chat content.";
         }
 
         let userCount = 0;
         let claudeCount = 0;
+        let pendingClaude = [];
 
-        Array.from(container.children).forEach(child => {
-            // Identify User Turn
-            // Selector: div.flex.flex-col.gap-2 AND contains the user bubble
-            if (child.classList.contains('gap-2') && child.querySelector('div.bg-bg-200.rounded-lg.px-3.py-2.font-base.text-text-000')) {
+        function flushClaude() {
+            if (pendingClaude.length === 0) return;
+            claudeCount++;
+            const fullText = pendingClaude.join('\n\n').trim();
+            markdown += `## Claude ${claudeCount}\n\n${demoteHeadings(fullText)}\n\n`;
+            pendingClaude = [];
+        }
+
+        rows.forEach(r => {
+            const userMsg = r.matches && r.matches('[data-testid="user-message"]') ? r : r.querySelector('[data-testid="user-message"]');
+            const asstMsg = r.matches && r.matches('[data-testid="assistant-message"]') ? r : r.querySelector('[data-testid="assistant-message"]');
+
+            if (userMsg) {
+                flushClaude();
                 userCount++;
-                markdown += `## User ${userCount}\n\n`;
-                // The content is inside the bubble
-                const bubble = child.querySelector('div.bg-bg-200.rounded-lg.px-3.py-2.font-base.text-text-000');
-                markdown += parseNode(bubble).trim() + '\n\n';
-            }
-            // Identify Claude Turn
-            // Selector: div.px-3.mb-1
-            else if (child.classList.contains('px-3') && child.classList.contains('mb-1')) {
-                claudeCount++;
-                markdown += `## Claude ${claudeCount}\n\n`;
-
-                // Claude's turn contains a list of items (steps or text)
-                // The container for items is usually `div.flex.flex-col.gap-4` inside the turn
-                const contentContainer = child.querySelector('div.flex.flex-col.gap-4');
-                if (contentContainer) {
-                    Array.from(contentContainer.children).forEach(item => {
-                        // Check if it's a step (has the dot ●)
-                        // Selector: div.flex.items-start.gap-1.text-sm
-                        if (item.classList.contains('flex') && item.classList.contains('items-start') && item.classList.contains('gap-1') && item.classList.contains('text-sm')) {
-                             markdown += parseStep(item);
-                        } else {
-                             // Regular text or other content
-                             markdown += parseNode(item).trim() + '\n\n';
-                        }
-                    });
+                const userText = parseNode(userMsg).trim();
+                markdown += `## User ${userCount}\n\n${demoteHeadings(userText)}\n\n`;
+            } else if (asstMsg) {
+                const turnStatus = asstMsg.querySelector('[data-cds="TurnStatus"]');
+                if (turnStatus) {
+                    const statusText = turnStatus.textContent.trim().replace(//g, '').trim();
+                    if (statusText) {
+                        pendingClaude.push(`> ⚙️ **${statusText}**`);
+                    }
                 } else {
-                    // Fallback if structure is different
-                    markdown += parseNode(child).trim() + '\n\n';
+                    const asstText = parseNode(asstMsg).trim();
+                    if (asstText) {
+                        pendingClaude.push(asstText);
+                    }
                 }
             }
         });
 
-        return markdown.replace(/\n{3,}/g, '\n\n').trim();
+        flushClaude();
+
+        return markdown
+            .replace(/(?<!`)`\./g, '`\u3000.')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
     }
 
     function downloadMarkdown() {
-        const markdownContent = extractContent();
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${getTitle()}.md`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const button = document.querySelector('.download-markdown-button');
+        const originalText = button ? button.innerText : 'MD';
+        if (button) {
+            button.innerText = '⏳';
+            button.style.pointerEvents = 'none';
+        }
+
+        try {
+            const title = getTitle();
+            const markdownContent = extractContent();
+            const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${sanitizeFilename(title)}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error("[Claude Code Web to Markdown] Download failed:", err);
+            alert("匯出 Markdown 失敗，請開啟 Console 檢視錯誤。");
+        } finally {
+            if (button) {
+                button.innerText = originalText;
+                button.style.pointerEvents = 'auto';
+            }
+        }
     }
 
-    // Run the script
-    const observer = new MutationObserver((mutations, obs) => {
-        // Wait for at least one Claude response or User message to appear
-        const readySelector = 'div.px-3.mb-1, div.bg-bg-200.rounded-lg.px-3.py-2';
+    const observer = new MutationObserver(() => {
+        const readySelector = '[data-testid="user-message"], [data-testid="assistant-message"], [data-testid="transcript-row"], [data-testid="transcript-rows"], [data-cds="AssistantMessage"]';
         if (document.querySelector(readySelector)) {
             addStyles();
             createButton();
-            obs.disconnect();
         }
     });
 
     observer.observe(document.body, {
         childList: true,
         subtree: true
+    });
+
+    window.addEventListener('load', () => {
+        addStyles();
+        createButton();
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        addStyles();
+        createButton();
     });
 
 })();
