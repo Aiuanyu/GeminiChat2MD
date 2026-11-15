@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.9.2
+// @version      0.10.0
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.10.0 2026-11-15 - Added per-message UTC+8 timestamps and AI model metadata in API extraction (preserving turn numbering).
 // @history      0.9.2 2026-09-23 - Fixed attachment extraction in new Claude UI (supporting multiple attachments, data-cds MessageAttachmentsFile, CardLink title and bdi).
 // @history      0.9.1 2026-09-21 - Demoted message headings to start from H3 (###) to prevent outline collision with turn headings (## User / ## Claude).
 // @history      0.9.0 2026-09-18 - Implemented API-first extraction to support complete conversation retrieval with virtual scrolling (Rocksteady) DOM fallback.
@@ -24,7 +25,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.9.2';
+    const SCRIPT_VERSION = '0.10.0';
 
     function addStyles() {
         const css = `
@@ -432,14 +433,60 @@
         return parts.join('');
     }
 
+    function formatUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const hh = pad(utc8.getUTCHours());
+        const mi = pad(utc8.getUTCMinutes());
+        const ss = pad(utc8.getUTCSeconds());
+        return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +08:00`;
+    }
+
+    function extractMessageModel(msg, conversationModel) {
+        const candidates = [
+            msg && msg.model,
+            msg && msg.metadata && msg.metadata.model,
+            conversationModel
+        ];
+        for (const candidate of candidates) {
+            if (typeof candidate === 'string' && candidate.trim()) {
+                return candidate.trim();
+            }
+        }
+        return '';
+    }
+
     function formatAPIConversation(data) {
         const title = (data.name && data.name.trim()) ? data.name.trim() : getTitle();
         const escapedTitle = title.replace(/"/g, '\\"');
+        const conversationModel = (typeof data.model === 'string' && data.model.trim()) ? data.model.trim() : '';
+        const convCreatedAt = formatUtc8Timestamp(data.created_at);
+        const convUpdatedAt = formatUtc8Timestamp(data.updated_at);
+        const exportedAt = formatUtc8Timestamp(new Date());
 
-        let markdown = `---
+        let frontmatter = `---
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
 title: "${escapedTitle}"
 url: "${window.location.href}"
+`;
+        if (conversationModel) {
+            frontmatter += `model: "${conversationModel.replace(/"/g, '\\"')}"\n`;
+        }
+        if (convCreatedAt) {
+            frontmatter += `created_at: "${convCreatedAt}"\n`;
+        }
+        if (convUpdatedAt) {
+            frontmatter += `updated_at: "${convUpdatedAt}"\n`;
+        }
+        frontmatter += `exported_at: "${exportedAt}"
 tags:
   - Claude
 ---
@@ -447,6 +494,8 @@ tags:
 # ${title}
 
 `;
+
+        let markdown = frontmatter;
 
         let userCount = 0;
         let claudeCount = 0;
@@ -504,12 +553,17 @@ tags:
             }
 
             const cleanBody = demoteHeadings(body.trim());
+            const msgTimestamp = formatUtc8Timestamp(msg.created_at || msg.updated_at);
             if (isUser) {
                 userCount++;
-                markdown += `## User ${userCount}\n\n${cleanBody}\n\n`;
+                const meta = msgTimestamp ? ` (${msgTimestamp})` : '';
+                markdown += `## User ${userCount}${meta}\n\n${cleanBody}\n\n`;
             } else {
                 claudeCount++;
-                markdown += `## Claude ${claudeCount}\n\n${cleanBody}\n\n`;
+                const msgModel = extractMessageModel(msg, conversationModel);
+                const metaText = [msgModel, msgTimestamp].filter(Boolean).join(' · ');
+                const meta = metaText ? ` (${metaText})` : '';
+                markdown += `## Claude ${claudeCount}${meta}\n\n${cleanBody}\n\n`;
             }
         });
 
@@ -522,11 +576,13 @@ tags:
     function extractContentFromDOM() {
         const title = getTitle();
         const escapedTitle = title.replace(/"/g, '\\"');
+        const exportedAt = formatUtc8Timestamp(new Date());
 
         let markdown = `---
 parser: "Claude to Markdown v${SCRIPT_VERSION}"
 title: "${escapedTitle}"
 url: "${window.location.href}"
+exported_at: "${exportedAt}"
 tags:
   - Claude
 ---
