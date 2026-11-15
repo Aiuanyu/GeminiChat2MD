@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.2.0
+// @version      0.3.0
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.3.0 2026-11-15 - Added API-first extraction (/v1/code/sessions/{id}/events) with per-turn UTC+8 timestamps, AI model metadata, paginated event retrieval, and DOM fallback.
 // @history      0.2.0 2026-11-14 - Supported 2026 Claude Code Web DOM structure (transcript-row, user-message, assistant-message, TurnStatus); added demoteHeadings; fixed button mounting observer; added Obsidian backtick-dot formatting protection.
 // @history      0.1 2025-11-29 - Initial release.
 // ==/UserScript==
@@ -14,7 +15,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.2.0';
+    const SCRIPT_VERSION = '0.3.0';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -261,13 +262,239 @@
         }
     }
 
-    function extractContent() {
+    function formatUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const hh = pad(utc8.getUTCHours());
+        const mi = pad(utc8.getUTCMinutes());
+        const ss = pad(utc8.getUTCSeconds());
+        return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +08:00`;
+    }
+
+    function getSessionId() {
+        const match = window.location.pathname.match(/\/code\/(session_[A-Za-z0-9_-]+)/i);
+        return match ? match[1] : null;
+    }
+
+    async function fetchCodeSessionFromAPI(sessionId) {
+        let orgId = localStorage.getItem('lastActiveOrg');
+        if (!orgId) {
+            try {
+                const orgRes = await fetch(`${window.location.origin}/api/organizations`, { credentials: 'include' });
+                if (orgRes.ok) {
+                    const orgs = await orgRes.json();
+                    if (Array.isArray(orgs) && orgs.length > 0) {
+                        orgId = orgs[0].uuid;
+                    }
+                }
+            } catch (e) {
+                console.warn("[Claude Code Web to Markdown] Failed to fetch organizations:", e);
+            }
+        }
+        if (!orgId) return null;
+
+        const headers = {
+            'anthropic-version': '2023-06-01',
+            'x-organization-uuid': orgId
+        };
+
+        try {
+            const sessionRes = await fetch(`${window.location.origin}/v1/code/sessions/${sessionId}`, {
+                credentials: 'include',
+                headers
+            });
+            const sessionData = sessionRes.ok ? await sessionRes.json() : null;
+
+            const allEvents = [];
+            const seenIds = new Set();
+            let cursor = null;
+            for (let page = 0; page < 50; page++) {
+                const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : '?limit=100';
+                const evRes = await fetch(`${window.location.origin}/v1/code/sessions/${sessionId}/events${qs}`, {
+                    credentials: 'include',
+                    headers
+                });
+                if (!evRes.ok) break;
+                const evJson = await evRes.json();
+                const items = Array.isArray(evJson.data) ? evJson.data : [];
+                for (const ev of items) {
+                    if (ev.event_id && seenIds.has(ev.event_id)) continue;
+                    if (ev.event_id) seenIds.add(ev.event_id);
+                    allEvents.push(ev);
+                }
+                if (!evJson.next_cursor || evJson.next_cursor === cursor || items.length === 0) {
+                    break;
+                }
+                cursor = evJson.next_cursor;
+            }
+
+            allEvents.sort((a, b) => Number(a.sequence_num || 0) - Number(b.sequence_num || 0));
+            return { sessionData, events: allEvents };
+        } catch (e) {
+            console.warn("[Claude Code Web to Markdown] Failed to fetch code session API:", e);
+            return null;
+        }
+    }
+
+    function extractUserEventText(ev) {
+        if (!ev || ev.event_type !== 'user') return '';
+        const payload = ev.payload || {};
+        if (payload.tool_use_result) return '';
+
+        const content = payload.message && payload.message.content;
+        if (typeof content === 'string') {
+            return content.trim();
+        }
+        if (Array.isArray(content)) {
+            const textParts = [];
+            content.forEach(block => {
+                if (typeof block === 'string' && block.trim()) {
+                    textParts.push(block.trim());
+                } else if (block && typeof block === 'object' && block.type === 'text' && block.text) {
+                    textParts.push(block.text.trim());
+                }
+            });
+            return textParts.join('\n\n').trim();
+        }
+        return '';
+    }
+
+    function formatToolUseSummary(block) {
+        const name = block.name || 'Tool';
+        const input = block.input || {};
+        const target = input.file_path || input.path || input.description || input.pattern || input.query || input.url || '';
+        if (typeof target === 'string' && target.trim()) {
+            return `> ⚙️ **${name}** \`${target.trim()}\``;
+        }
+        if (typeof input.command === 'string' && input.command.trim()) {
+            const cmd = input.command.trim().split('\n')[0].slice(0, 80);
+            return `> ⚙️ **${name}** \`${cmd}\``;
+        }
+        return `> ⚙️ **${name}**`;
+    }
+
+    function formatCodeSessionAPI(sessionData, events) {
+        const rawTitle = (sessionData && sessionData.title) ? cleanTitle(sessionData.title) : '';
+        const title = rawTitle || getTitle();
+        const escapedTitle = title.replace(/"/g, '\\"');
+        const sessionModel = (sessionData && sessionData.config && sessionData.config.model)
+            || (sessionData && sessionData.external_metadata && (sessionData.external_metadata.last_served_model || sessionData.external_metadata.model))
+            || '';
+        const createdAt = formatUtc8Timestamp(sessionData && sessionData.created_at);
+        const updatedAt = formatUtc8Timestamp(sessionData && sessionData.updated_at);
+        const exportedAt = formatUtc8Timestamp(new Date());
+
+        let markdown = `---
+parser: "Claude Code Web to Markdown v${SCRIPT_VERSION}"
+title: "${escapedTitle}"
+url: "${window.location.href}"
+`;
+        if (sessionModel) {
+            markdown += `model: "${String(sessionModel).replace(/"/g, '\\"')}"\n`;
+        }
+        if (createdAt) {
+            markdown += `created_at: "${createdAt}"\n`;
+        }
+        if (updatedAt) {
+            markdown += `updated_at: "${updatedAt}"\n`;
+        }
+        markdown += `exported_at: "${exportedAt}"
+tags:
+  - Claude_Code_Web
+---
+
+# ${title}
+
+`;
+
+        let userCount = 0;
+        let claudeCount = 0;
+        let pendingParts = [];
+        let pendingModel = '';
+        let pendingTimestamp = '';
+
+        function flushClaude() {
+            if (pendingParts.length === 0) return;
+            claudeCount++;
+            const model = pendingModel || sessionModel;
+            const metaText = [model, pendingTimestamp].filter(Boolean).join(' · ');
+            const meta = metaText ? ` (${metaText})` : '';
+            const fullText = pendingParts.join('\n\n').trim();
+            markdown += `## Claude ${claudeCount}${meta}\n\n${demoteHeadings(fullText)}\n\n`;
+            pendingParts = [];
+            pendingModel = '';
+            pendingTimestamp = '';
+        }
+
+        events.forEach(ev => {
+            if (ev.event_type === 'user') {
+                const userText = extractUserEventText(ev);
+                if (!userText) return;
+                flushClaude();
+                userCount++;
+                const ts = formatUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
+                const meta = ts ? ` (${ts})` : '';
+                markdown += `## User ${userCount}${meta}\n\n${demoteHeadings(userText)}\n\n`;
+            } else if (ev.event_type === 'assistant') {
+                const msg = ev.payload && ev.payload.message;
+                if (!msg) return;
+                if (typeof msg.model === 'string' && msg.model.trim()) {
+                    pendingModel = msg.model.trim();
+                }
+                const evTs = formatUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
+                if (evTs) {
+                    pendingTimestamp = evTs;
+                }
+                const content = msg.content;
+                if (typeof content === 'string' && content.trim()) {
+                    pendingParts.push(content.trim());
+                } else if (Array.isArray(content)) {
+                    content.forEach(block => {
+                        if (!block || typeof block !== 'object') return;
+                        if (block.type === 'text' && block.text && block.text.trim()) {
+                            pendingParts.push(block.text.trim());
+                        } else if (block.type === 'thinking' && block.thinking && block.thinking.trim()) {
+                            pendingParts.push(`<details><summary>Thinking Process</summary>\n\n${block.thinking.trim()}\n\n</details>`);
+                        } else if (block.type === 'tool_use') {
+                            pendingParts.push(formatToolUseSummary(block));
+                        }
+                    });
+                }
+            }
+        });
+
+        flushClaude();
+
+        if (userCount === 0 && claudeCount === 0) {
+            return null;
+        }
+
+        return {
+            title,
+            content: markdown
+                .replace(/(?<!`)`\./g, '`\u3000.')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim()
+        };
+    }
+
+    function extractContentFromDOM() {
         const title = getTitle();
+        const exportedAt = formatUtc8Timestamp(new Date());
 
         let markdown = `---
 parser: "Claude Code Web to Markdown v${SCRIPT_VERSION}"
 title: "${title}"
 url: "${window.location.href}"
+exported_at: "${exportedAt}"
 tags:
   - Claude_Code_Web
 ---
@@ -331,7 +558,7 @@ tags:
             .trim();
     }
 
-    function downloadMarkdown() {
+    async function downloadMarkdown() {
         const button = document.querySelector('.download-markdown-button');
         const originalText = button ? button.innerText : 'MD';
         if (button) {
@@ -340,8 +567,25 @@ tags:
         }
 
         try {
-            const title = getTitle();
-            const markdownContent = extractContent();
+            let title = getTitle();
+            let markdownContent = '';
+
+            const sessionId = getSessionId();
+            if (sessionId) {
+                const apiResult = await fetchCodeSessionFromAPI(sessionId);
+                if (apiResult && Array.isArray(apiResult.events) && apiResult.events.length > 0) {
+                    const parsed = formatCodeSessionAPI(apiResult.sessionData, apiResult.events);
+                    if (parsed) {
+                        title = parsed.title;
+                        markdownContent = parsed.content;
+                    }
+                }
+            }
+
+            if (!markdownContent) {
+                markdownContent = extractContentFromDOM();
+            }
+
             const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
