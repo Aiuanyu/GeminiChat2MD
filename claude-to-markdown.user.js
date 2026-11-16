@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.10.0
+// @version      0.10.1
 // @description  Converts a Claude chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/chat/*
 // @grant        none
 // @license      MIT
+// @history      0.10.1 2026-11-16 - Aligned h2 turn format (👤/🤖 emojis, <sup>YYYYMMDD H:MM +08:00</sup> timestamp line) and 💭 Thinking block across Claude, Claude Code, and AgyChat2MD.
 // @history      0.10.0 2026-11-15 - Added per-message UTC+8 timestamps and AI model metadata in API extraction (preserving turn numbering).
 // @history      0.9.2 2026-09-23 - Fixed attachment extraction in new Claude UI (supporting multiple attachments, data-cds MessageAttachmentsFile, CardLink title and bdi).
 // @history      0.9.1 2026-09-21 - Demoted message headings to start from H3 (###) to prevent outline collision with turn headings (## User / ## Claude).
@@ -25,7 +26,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.10.0';
+    const SCRIPT_VERSION = '0.10.1';
 
     function addStyles() {
         const css = `
@@ -450,6 +451,22 @@
         return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +08:00`;
     }
 
+    function formatSupUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const h = utc8.getUTCHours();
+        const mi = pad(utc8.getUTCMinutes());
+        return `${yyyy}${mm}${dd} ${h}:${mi} +08:00`;
+    }
+
     function extractMessageModel(msg, conversationModel) {
         const candidates = [
             msg && msg.model,
@@ -534,7 +551,7 @@ tags:
                         if (block.type === 'text' && block.text) {
                             body += block.text.trim() + '\n\n';
                         } else if (block.type === 'thinking' && block.thinking) {
-                            body += `<details><summary>Thinking Process</summary>\n\n${block.thinking.trim()}\n\n</details>\n\n`;
+                            body += `<details>\n<summary>💭 Thinking</summary>\n\n${block.thinking.trim()}\n\n</details>\n\n`;
                         } else if (block.type === 'tool_use') {
                             const name = block.name || 'tool';
                             const input = block.input || {};
@@ -553,17 +570,16 @@ tags:
             }
 
             const cleanBody = demoteHeadings(body.trim());
-            const msgTimestamp = formatUtc8Timestamp(msg.created_at || msg.updated_at);
+            const msgSupTs = formatSupUtc8Timestamp(msg.created_at || msg.updated_at);
+            const supLine = msgSupTs ? `\n<sup>${msgSupTs}</sup>` : '';
             if (isUser) {
                 userCount++;
-                const meta = msgTimestamp ? ` (${msgTimestamp})` : '';
-                markdown += `## User ${userCount}${meta}\n\n${cleanBody}\n\n`;
+                markdown += `## 👤 User ${userCount}${supLine}\n\n${cleanBody}\n\n`;
             } else {
                 claudeCount++;
                 const msgModel = extractMessageModel(msg, conversationModel);
-                const metaText = [msgModel, msgTimestamp].filter(Boolean).join(' · ');
-                const meta = metaText ? ` (${metaText})` : '';
-                markdown += `## Claude ${claudeCount}${meta}\n\n${cleanBody}\n\n`;
+                const modelMeta = msgModel ? ` (${msgModel})` : '';
+                markdown += `## 🤖 Claude ${claudeCount}${modelMeta}${supLine}\n\n${cleanBody}\n\n`;
             }
         });
 
@@ -614,13 +630,13 @@ tags:
             if (isClaude) {
                 claudeCount++;
                 const turnContent = demoteHeadings(parseClaudeTurn(el));
-                markdown += `## Claude ${claudeCount}\n\n${turnContent}\n\n`;
+                markdown += `## 🤖 Claude ${claudeCount}\n\n${turnContent}\n\n`;
             } else {
                 userCount++;
                 // Find the outermost container that represents this turn to parse attachments correctly
                 const wrapper = el.closest('[data-testid="transcript-row"]') || el.closest('[data-test-render-count]') || el.closest('.group\\/message-row') || el.closest('.group') || el;
                 const turnContent = demoteHeadings(parseUserTurn(wrapper));
-                markdown += `## User ${userCount}\n\n${turnContent}\n\n`;
+                markdown += `## 👤 User ${userCount}\n\n${turnContent}\n\n`;
             }
         });
 

@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3.0
+// @version      0.3.1
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.3.1 2026-11-16 - Aligned h2 turn format (👤/🤖 emojis, <sup>YYYYMMDD H:MM +08:00</sup> timestamp line) and 💭 Thinking block across Claude, Claude Code, and AgyChat2MD.
 // @history      0.3.0 2026-11-15 - Added API-first extraction (/v1/code/sessions/{id}/events) with per-turn UTC+8 timestamps, AI model metadata, paginated event retrieval, and DOM fallback.
 // @history      0.2.0 2026-11-14 - Supported 2026 Claude Code Web DOM structure (transcript-row, user-message, assistant-message, TurnStatus); added demoteHeadings; fixed button mounting observer; added Obsidian backtick-dot formatting protection.
 // @history      0.1 2025-11-29 - Initial release.
@@ -15,7 +16,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3.0';
+    const SCRIPT_VERSION = '0.3.1';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -279,6 +280,22 @@
         return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +08:00`;
     }
 
+    function formatSupUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const h = utc8.getUTCHours();
+        const mi = pad(utc8.getUTCMinutes());
+        return `${yyyy}${mm}${dd} ${h}:${mi} +08:00`;
+    }
+
     function getSessionId() {
         const match = window.location.pathname.match(/\/code\/(session_[A-Za-z0-9_-]+)/i);
         return match ? match[1] : null;
@@ -425,10 +442,10 @@ tags:
             if (pendingParts.length === 0) return;
             claudeCount++;
             const model = pendingModel || sessionModel;
-            const metaText = [model, pendingTimestamp].filter(Boolean).join(' · ');
-            const meta = metaText ? ` (${metaText})` : '';
+            const modelMeta = model ? ` (${model})` : '';
+            const supLine = pendingTimestamp ? `\n<sup>${pendingTimestamp}</sup>` : '';
             const fullText = pendingParts.join('\n\n').trim();
-            markdown += `## Claude ${claudeCount}${meta}\n\n${demoteHeadings(fullText)}\n\n`;
+            markdown += `## 🤖 Claude ${claudeCount}${modelMeta}${supLine}\n\n${demoteHeadings(fullText)}\n\n`;
             pendingParts = [];
             pendingModel = '';
             pendingTimestamp = '';
@@ -440,16 +457,16 @@ tags:
                 if (!userText) return;
                 flushClaude();
                 userCount++;
-                const ts = formatUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
-                const meta = ts ? ` (${ts})` : '';
-                markdown += `## User ${userCount}${meta}\n\n${demoteHeadings(userText)}\n\n`;
+                const ts = formatSupUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
+                const supLine = ts ? `\n<sup>${ts}</sup>` : '';
+                markdown += `## 👤 User ${userCount}${supLine}\n\n${demoteHeadings(userText)}\n\n`;
             } else if (ev.event_type === 'assistant') {
                 const msg = ev.payload && ev.payload.message;
                 if (!msg) return;
                 if (typeof msg.model === 'string' && msg.model.trim()) {
                     pendingModel = msg.model.trim();
                 }
-                const evTs = formatUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
+                const evTs = formatSupUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
                 if (evTs) {
                     pendingTimestamp = evTs;
                 }
@@ -462,7 +479,7 @@ tags:
                         if (block.type === 'text' && block.text && block.text.trim()) {
                             pendingParts.push(block.text.trim());
                         } else if (block.type === 'thinking' && block.thinking && block.thinking.trim()) {
-                            pendingParts.push(`<details><summary>Thinking Process</summary>\n\n${block.thinking.trim()}\n\n</details>`);
+                            pendingParts.push(`<details>\n<summary>💭 Thinking</summary>\n\n${block.thinking.trim()}\n\n</details>`);
                         } else if (block.type === 'tool_use') {
                             pendingParts.push(formatToolUseSummary(block));
                         }
@@ -521,7 +538,7 @@ tags:
             if (pendingClaude.length === 0) return;
             claudeCount++;
             const fullText = pendingClaude.join('\n\n').trim();
-            markdown += `## Claude ${claudeCount}\n\n${demoteHeadings(fullText)}\n\n`;
+            markdown += `## 🤖 Claude ${claudeCount}\n\n${demoteHeadings(fullText)}\n\n`;
             pendingClaude = [];
         }
 
@@ -533,7 +550,7 @@ tags:
                 flushClaude();
                 userCount++;
                 const userText = parseNode(userMsg).trim();
-                markdown += `## User ${userCount}\n\n${demoteHeadings(userText)}\n\n`;
+                markdown += `## 👤 User ${userCount}\n\n${demoteHeadings(userText)}\n\n`;
             } else if (asstMsg) {
                 const turnStatus = asstMsg.querySelector('[data-cds="TurnStatus"]');
                 if (turnStatus) {
