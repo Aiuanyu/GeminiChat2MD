@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4.1
+// @version      0.4.2
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.4.2 2026-11-22 - Switched <agent-message> subagent reports from <details> to Obsidian foldable callout (> [!info]-) to prevent unclosed block breakage in Obsidian Live Preview.
 // @history      0.4.1 2026-11-22 - Ignored <synthetic> model tag in assistant headings to prevent Obsidian Live Preview breakage, and formatted synthetic system notices as warning blockquotes.
 // @history      0.4.0 2026-11-21 - Fixed 50-page (5000-event) truncation limit; isolated subagent events via parent_tool_use_id with tool-use stats; parsed <agent-message> and <task-notification> into collapsible details/blockquotes instead of fake User turns.
 // @history      0.3.1 2026-11-16 - Aligned h2 turn format (👤/🤖 emojis, <sup>YYYYMMDD H:MM +08:00</sup> timestamp line) and 💭 Thinking block across Claude, Claude Code, and AgyChat2MD.
@@ -18,7 +19,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4.1';
+    const SCRIPT_VERSION = '0.4.2';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -434,8 +435,9 @@
             body = userText.replace(/<\/?agent-message[^>]*>/gi, '').trim();
         }
 
-        const safeBody = demoteHeadings(body, 4).replace(/<\/details>/gi, '&lt;/details&gt;');
-        return `<details>\n<summary>📨 Subagent Report${labelSuffix}</summary>\n\n${safeBody}\n\n</details>`;
+        const safeBody = demoteHeadings(body, 4);
+        const quotedLines = safeBody.split('\n').map(line => line.trim() ? `> ${line}` : '>');
+        return `> [!info]- 📨 Subagent Report${labelSuffix}\n${quotedLines.join('\n')}`;
     }
 
     function formatTaskNotificationBlock(userText) {
