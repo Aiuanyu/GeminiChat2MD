@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.3.1
+// @version      0.4.0
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.4.0 2026-11-21 - Fixed 50-page (5000-event) truncation limit; isolated subagent events via parent_tool_use_id with tool-use stats; parsed <agent-message> and <task-notification> into collapsible details/blockquotes instead of fake User turns.
 // @history      0.3.1 2026-11-16 - Aligned h2 turn format (👤/🤖 emojis, <sup>YYYYMMDD H:MM +08:00</sup> timestamp line) and 💭 Thinking block across Claude, Claude Code, and AgyChat2MD.
 // @history      0.3.0 2026-11-15 - Added API-first extraction (/v1/code/sessions/{id}/events) with per-turn UTC+8 timestamps, AI model metadata, paginated event retrieval, and DOM fallback.
 // @history      0.2.0 2026-11-14 - Supported 2026 Claude Code Web DOM structure (transcript-row, user-message, assistant-message, TurnStatus); added demoteHeadings; fixed button mounting observer; added Obsidian backtick-dot formatting protection.
@@ -16,7 +17,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.3.1';
+    const SCRIPT_VERSION = '0.4.0';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -333,7 +334,7 @@
             const allEvents = [];
             const seenIds = new Set();
             let cursor = null;
-            for (let page = 0; page < 50; page++) {
+            for (let page = 0; page < 1000; page++) {
                 const qs = cursor ? `?limit=100&cursor=${encodeURIComponent(cursor)}` : '?limit=100';
                 const evRes = await fetch(`${window.location.origin}/v1/code/sessions/${sessionId}/events${qs}`, {
                     credentials: 'include',
@@ -384,10 +385,19 @@
         return '';
     }
 
-    function formatToolUseSummary(block) {
+    function formatToolUseSummary(block, subagentStatsMap) {
         const name = block.name || 'Tool';
         const input = block.input || {};
-        const target = input.file_path || input.path || input.description || input.pattern || input.query || input.url || '';
+        if (name === 'Agent') {
+            const desc = typeof input.description === 'string' ? input.description.trim() : '';
+            const subType = typeof input.subagent_type === 'string' ? input.subagent_type.trim() : '';
+            const model = typeof input.model === 'string' ? input.model.trim() : '';
+            const stats = block.id && subagentStatsMap ? subagentStatsMap.get(block.id) : null;
+            const meta = [subType, model, stats ? `${stats.toolUses} tool uses` : ''].filter(Boolean).join(', ');
+            const metaStr = meta ? ` (${meta})` : '';
+            return desc ? `> 🤖 **Agent** \`${desc}\`${metaStr}` : `> 🤖 **Agent**${metaStr}`;
+        }
+        const target = input.file_path || input.path || input.description || input.pattern || input.query || input.url || input.to || input.recipient || '';
         if (typeof target === 'string' && target.trim()) {
             return `> ⚙️ **${name}** \`${target.trim()}\``;
         }
@@ -396,6 +406,54 @@
             return `> ⚙️ **${name}** \`${cmd}\``;
         }
         return `> ⚙️ **${name}**`;
+    }
+
+    function extractXmlTag(text, tag) {
+        const m = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'));
+        return m ? m[1].trim() : '';
+    }
+
+    function formatAgentMessageBlock(ev, userText) {
+        const origin = (ev.payload && ev.payload.origin) || {};
+        const fromMatch = userText.match(/<agent-message\s+from="([^"]+)"[^>]*>([\s\S]*?)<\/agent-message>/i);
+        const fromId = origin.from || (fromMatch && fromMatch[1]) || '';
+        const agentName = origin.name && origin.name !== 'general-purpose' ? origin.name : '';
+        const label = [agentName, fromId].filter(Boolean).join(' / ');
+        const labelSuffix = label ? ` (\`${label}\`)` : '';
+
+        let body = '';
+        if (typeof origin.handbackReportText === 'string' && origin.handbackReportText.trim()) {
+            body = origin.handbackReportText.trim();
+        } else if (fromMatch && fromMatch[2]) {
+            body = fromMatch[2]
+                .replace(/^\[Subagent hand-back\][\s\S]*?The report follows:\s*\n?/i, '')
+                .replace(/^  /gm, '')
+                .trim();
+        } else {
+            body = userText.replace(/<\/?agent-message[^>]*>/gi, '').trim();
+        }
+
+        const safeBody = demoteHeadings(body, 4).replace(/<\/details>/gi, '&lt;/details&gt;');
+        return `<details>\n<summary>📨 Subagent Report${labelSuffix}</summary>\n\n${safeBody}\n\n</details>`;
+    }
+
+    function formatTaskNotificationBlock(userText) {
+        const taskId = extractXmlTag(userText, 'task-id');
+        const status = extractXmlTag(userText, 'status') || 'update';
+        const summary = extractXmlTag(userText, 'summary');
+        const tokens = extractXmlTag(userText, 'subagent_tokens');
+        const toolUses = extractXmlTag(userText, 'tool_uses');
+        const durationMs = extractXmlTag(userText, 'duration_ms');
+
+        const statsParts = [];
+        if (toolUses) statsParts.push(`${toolUses} tool uses`);
+        if (tokens) statsParts.push(`${Number(tokens).toLocaleString('en-US')} tokens`);
+        if (durationMs) statsParts.push(`${(Number(durationMs) / 1000).toFixed(1)}s`);
+
+        const idPart = taskId ? ` (\`${taskId}\`)` : '';
+        const summaryPart = summary ? `: ${summary}` : '';
+        const statsPart = statsParts.length > 0 ? ` — ${statsParts.join(', ')}` : '';
+        return `> 📋 **Task ${status}**${idPart}${summaryPart}${statsPart}`;
     }
 
     function formatCodeSessionAPI(sessionData, events) {
@@ -432,6 +490,22 @@ tags:
 
 `;
 
+        const subagentStatsMap = new Map();
+        events.forEach(ev => {
+            const parentId = ev && ev.payload && ev.payload.parent_tool_use_id;
+            if (!parentId) return;
+            if (!subagentStatsMap.has(parentId)) {
+                subagentStatsMap.set(parentId, { toolUses: 0 });
+            }
+            if (ev.event_type === 'assistant' && ev.payload.message && Array.isArray(ev.payload.message.content)) {
+                ev.payload.message.content.forEach(block => {
+                    if (block && block.type === 'tool_use') {
+                        subagentStatsMap.get(parentId).toolUses++;
+                    }
+                });
+            }
+        });
+
         let userCount = 0;
         let claudeCount = 0;
         let pendingParts = [];
@@ -452,13 +526,32 @@ tags:
         }
 
         events.forEach(ev => {
+            if (ev.payload && ev.payload.parent_tool_use_id) {
+                return;
+            }
             if (ev.event_type === 'user') {
                 const userText = extractUserEventText(ev);
                 if (!userText) return;
+                const originKind = ev.payload && ev.payload.origin && ev.payload.origin.kind;
+                const evTs = formatSupUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
+                if (originKind === 'peer' || /<agent-message\b/i.test(userText)) {
+                    if (evTs && !pendingTimestamp) pendingTimestamp = evTs;
+                    pendingParts.push(formatAgentMessageBlock(ev, userText));
+                    return;
+                }
+                if (originKind === 'task-notification' || /<task-notification>/i.test(userText)) {
+                    if (evTs && !pendingTimestamp) pendingTimestamp = evTs;
+                    pendingParts.push(formatTaskNotificationBlock(userText));
+                    return;
+                }
+                if (ev.payload && ev.payload.isSynthetic) {
+                    if (evTs && !pendingTimestamp) pendingTimestamp = evTs;
+                    pendingParts.push(`\`\`\`text\n${userText.replace(/```/g, '\\`\\`\\`')}\n\`\`\``);
+                    return;
+                }
                 flushClaude();
                 userCount++;
-                const ts = formatSupUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
-                const supLine = ts ? `\n<sup>${ts}</sup>` : '';
+                const supLine = evTs ? `\n<sup>${evTs}</sup>` : '';
                 markdown += `## 👤 User ${userCount}${supLine}\n\n${demoteHeadings(userText)}\n\n`;
             } else if (ev.event_type === 'assistant') {
                 const msg = ev.payload && ev.payload.message;
@@ -481,7 +574,7 @@ tags:
                         } else if (block.type === 'thinking' && block.thinking && block.thinking.trim()) {
                             pendingParts.push(`<details>\n<summary>💭 Thinking</summary>\n\n${block.thinking.trim()}\n\n</details>`);
                         } else if (block.type === 'tool_use') {
-                            pendingParts.push(formatToolUseSummary(block));
+                            pendingParts.push(formatToolUseSummary(block, subagentStatsMap));
                         }
                     });
                 }
