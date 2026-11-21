@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4.0
+// @version      0.4.1
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.4.1 2026-11-22 - Ignored <synthetic> model tag in assistant headings to prevent Obsidian Live Preview breakage, and formatted synthetic system notices as warning blockquotes.
 // @history      0.4.0 2026-11-21 - Fixed 50-page (5000-event) truncation limit; isolated subagent events via parent_tool_use_id with tool-use stats; parsed <agent-message> and <task-notification> into collapsible details/blockquotes instead of fake User turns.
 // @history      0.3.1 2026-11-16 - Aligned h2 turn format (👤/🤖 emojis, <sup>YYYYMMDD H:MM +08:00</sup> timestamp line) and 💭 Thinking block across Claude, Claude Code, and AgyChat2MD.
 // @history      0.3.0 2026-11-15 - Added API-first extraction (/v1/code/sessions/{id}/events) with per-turn UTC+8 timestamps, AI model metadata, paginated event retrieval, and DOM fallback.
@@ -17,7 +18,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4.0';
+    const SCRIPT_VERSION = '0.4.1';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -515,8 +516,8 @@ tags:
         function flushClaude() {
             if (pendingParts.length === 0) return;
             claudeCount++;
-            const model = pendingModel || sessionModel;
-            const modelMeta = model ? ` (${model})` : '';
+            const rawModel = (pendingModel || sessionModel || '').replace(/[<>]/g, '').trim();
+            const modelMeta = rawModel && rawModel !== 'synthetic' ? ` (${rawModel})` : '';
             const supLine = pendingTimestamp ? `\n<sup>${pendingTimestamp}</sup>` : '';
             const fullText = pendingParts.join('\n\n').trim();
             markdown += `## 🤖 Claude ${claudeCount}${modelMeta}${supLine}\n\n${demoteHeadings(fullText)}\n\n`;
@@ -556,8 +557,12 @@ tags:
             } else if (ev.event_type === 'assistant') {
                 const msg = ev.payload && ev.payload.message;
                 if (!msg) return;
-                if (typeof msg.model === 'string' && msg.model.trim()) {
-                    pendingModel = msg.model.trim();
+                const isSyntheticModel = typeof msg.model === 'string' && msg.model.trim() === '<synthetic>';
+                if (typeof msg.model === 'string') {
+                    const rawModel = msg.model.trim();
+                    if (rawModel && !/^<.*>$/.test(rawModel)) {
+                        pendingModel = rawModel;
+                    }
                 }
                 const evTs = formatSupUtc8Timestamp(ev.created_at || (ev.payload && ev.payload.timestamp));
                 if (evTs) {
@@ -565,12 +570,12 @@ tags:
                 }
                 const content = msg.content;
                 if (typeof content === 'string' && content.trim()) {
-                    pendingParts.push(content.trim());
+                    pendingParts.push(isSyntheticModel ? `> ⚠️ ${content.trim()}` : content.trim());
                 } else if (Array.isArray(content)) {
                     content.forEach(block => {
                         if (!block || typeof block !== 'object') return;
                         if (block.type === 'text' && block.text && block.text.trim()) {
-                            pendingParts.push(block.text.trim());
+                            pendingParts.push(isSyntheticModel ? `> ⚠️ ${block.text.trim()}` : block.text.trim());
                         } else if (block.type === 'thinking' && block.thinking && block.thinking.trim()) {
                             pendingParts.push(`<details>\n<summary>💭 Thinking</summary>\n\n${block.thinking.trim()}\n\n</details>`);
                         } else if (block.type === 'tool_use') {
