@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.15.2
+// @version      0.16.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.16.0 2026-11-25 - Added batchexecute (hNvQHb) metadata enrichment for per-turn UTC+8 timestamps, AI model metadata, and frontmatter created_at/updated_at/exported_at/model while preserving DOM and Canvas extraction.
 // @history      0.15.2 2026-11-02 - Fixed regular expression syntax error (unterminated group) in wrapInlineHtmlInCode for GreasyFork webhook sync.
 // @history      0.15.1 2026-11-02 - Supported blockquote (>) rendering in chat and Canvas; changed unordered list marker from * to - for Obsidian Markdown compatibility.
 // @history      0.15.0 2026-11-02 - Wrapped raw non-fenced inline HTML tags across chat messages and Canvas in Markdown code format to ensure proper display in Obsidian.
@@ -30,9 +31,169 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.15.2';
+    const SCRIPT_VERSION = '0.16.0';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
+
+    function formatUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const hh = pad(utc8.getUTCHours());
+        const mi = pad(utc8.getUTCMinutes());
+        const ss = pad(utc8.getUTCSeconds());
+        return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss} +08:00`;
+    }
+
+    function formatSupUtc8Timestamp(input) {
+        if (!input) return '';
+        const date = input instanceof Date ? input : new Date(input);
+        if (Number.isNaN(date.getTime())) {
+            return typeof input === 'string' ? input.trim() : '';
+        }
+        const utc8 = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+        const pad = (n) => String(n).padStart(2, '0');
+        const yyyy = utc8.getUTCFullYear();
+        const mm = pad(utc8.getUTCMonth() + 1);
+        const dd = pad(utc8.getUTCDate());
+        const h = utc8.getUTCHours();
+        const mi = pad(utc8.getUTCMinutes());
+        return `${yyyy}${mm}${dd} ${h}:${mi} +08:00`;
+    }
+
+    function parseGeminiTimestamp(tsField) {
+        if (!tsField) return null;
+        let seconds = null;
+        let nanos = 0;
+        if (Array.isArray(tsField) && typeof tsField[0] === 'number') {
+            seconds = tsField[0];
+            nanos = typeof tsField[1] === 'number' ? tsField[1] : 0;
+        } else if (typeof tsField === 'number') {
+            seconds = tsField > 1e12 ? tsField / 1000 : tsField;
+        }
+        if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) return null;
+        const date = new Date(seconds * 1000 + Math.floor(nanos / 1e6));
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    function getChatIdFromPath() {
+        const match = window.location.pathname.match(/\/(?:app|gem(?:\/[^\/]+)?)\/([a-zA-Z0-9_-]{8,})/);
+        return match ? match[1] : null;
+    }
+
+    async function fetchConversationMetadata() {
+        const chatId = getChatIdFromPath();
+        if (!chatId) return null;
+
+        const wiz = (typeof window.wrappedJSObject !== 'undefined' && window.wrappedJSObject && window.wrappedJSObject.WIZ_global_data)
+            || window.WIZ_global_data;
+        if (!wiz || !wiz.SNlM0e) return null;
+
+        const snlm0e = wiz.SNlM0e;
+        const bl = wiz.cfb2h || '';
+        const fsid = wiz.FdrFJe || '';
+        const convKey = chatId.startsWith('c_') ? chatId : `c_${chatId}`;
+
+        const turnMetaMap = new Map();
+        let earliestDate = null;
+        let latestDate = null;
+        let latestModel = '';
+        let cursor = null;
+        const seenCursors = new Set();
+
+        try {
+            for (let page = 0; page < 50; page++) {
+                const rpcPayload = [convKey, 50, cursor, 1, [1], [4], null, 1];
+                const fReq = JSON.stringify([[["hNvQHb", JSON.stringify(rpcPayload), null, "generic"]]]);
+                const body = new URLSearchParams({
+                    'f.req': fReq,
+                    'at': snlm0e
+                });
+
+                const params = new URLSearchParams({
+                    rpcids: 'hNvQHb',
+                    'source-path': window.location.pathname,
+                    hl: 'zh-TW',
+                    _reqid: String(Math.floor(1000000 + Math.random() * 8999999)),
+                    rt: 'c'
+                });
+                if (bl) params.set('bl', bl);
+                if (fsid) params.set('f.sid', fsid);
+
+                const url = `${window.location.origin}/_/BardChatUi/data/batchexecute?${params.toString()}`;
+                const resp = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    body: body.toString(),
+                    credentials: 'include'
+                });
+                if (!resp.ok) break;
+
+                const text = await resp.text();
+                let wrbData = null;
+                for (const line of text.split('\n')) {
+                    if (!line.includes('wrb.fr')) continue;
+                    try {
+                        const parsed = JSON.parse(line);
+                        if (parsed && parsed[0] && parsed[0][2]) {
+                            wrbData = JSON.parse(parsed[0][2]);
+                            break;
+                        }
+                    } catch (e) {}
+                }
+
+                const turns = Array.isArray(wrbData && wrbData[0]) ? wrbData[0] : [];
+                if (turns.length === 0) break;
+
+                for (const t of turns) {
+                    const rawId = t && t[0] && t[0][1];
+                    if (typeof rawId !== 'string' || !rawId) continue;
+                    const normalizedId = rawId.replace(/^r_/, '');
+
+                    const modelDisplay = (t[3] && typeof t[3][21] === 'string') ? t[3][21].trim() : '';
+                    const modelId = (t[3] && typeof t[3][31] === 'string') ? t[3][31].trim() : '';
+                    const timestampDate = parseGeminiTimestamp(t[4]);
+
+                    if (!turnMetaMap.has(normalizedId)) {
+                        turnMetaMap.set(normalizedId, {
+                            modelDisplay,
+                            modelId,
+                            timestampDate
+                        });
+                    }
+
+                    if (!latestModel && (modelDisplay || modelId)) {
+                        latestModel = modelDisplay || modelId;
+                    }
+                    if (timestampDate) {
+                        if (!earliestDate || timestampDate < earliestDate) earliestDate = timestampDate;
+                        if (!latestDate || timestampDate > latestDate) latestDate = timestampDate;
+                    }
+                }
+
+                const nextCursor = (wrbData && typeof wrbData[1] === 'string' && wrbData[1]) ? wrbData[1] : null;
+                if (!nextCursor || seenCursors.has(nextCursor)) break;
+                seenCursors.add(nextCursor);
+                cursor = nextCursor;
+            }
+        } catch (err) {
+            console.warn('[Gemini to Markdown] Failed to fetch conversation metadata via batchexecute:', err);
+        }
+
+        return {
+            turnMetaMap,
+            createdAt: earliestDate,
+            updatedAt: latestDate,
+            sessionModel: latestModel
+        };
+    }
 
     function addStyles() {
         const css = `
@@ -459,15 +620,31 @@
         return parts.join('');
     }
 
-    function extractContent() {
+    function extractContent(metaResult = null) {
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
         const title = cleanTitle(getTitle());
         const escapedTitle = title.replace(/"/g, '\\"');
+        const turnMetaMap = (metaResult && metaResult.turnMetaMap) ? metaResult.turnMetaMap : new Map();
+        const sessionModel = (metaResult && metaResult.sessionModel) ? metaResult.sessionModel : '';
+        const createdAt = (metaResult && metaResult.createdAt) ? formatUtc8Timestamp(metaResult.createdAt) : '';
+        const updatedAt = (metaResult && metaResult.updatedAt) ? formatUtc8Timestamp(metaResult.updatedAt) : '';
+        const exportedAt = formatUtc8Timestamp(new Date());
 
         let markdown = `---
 parser: "Gemini to Markdown v${SCRIPT_VERSION}"
 title: "${escapedTitle}"
 url: "${window.location.href}"
+`;
+        if (sessionModel) {
+            markdown += `model: "${sessionModel.replace(/"/g, '\\"')}"\n`;
+        }
+        if (createdAt) {
+            markdown += `created_at: "${createdAt}"\n`;
+        }
+        if (updatedAt) {
+            markdown += `updated_at: "${updatedAt}"\n`;
+        }
+        markdown += `exported_at: "${exportedAt}"
 tags:
   - Gemini
 `;
@@ -624,17 +801,24 @@ tags:
 
         turns.forEach((turn, index) => {
             currentTurnIndex = index;
+            const turnId = turn.id ? turn.id.replace(/^r_/, '') : '';
+            const turnMeta = turnId ? turnMetaMap.get(turnId) : null;
+            const supText = (turnMeta && turnMeta.timestampDate) ? formatSupUtc8Timestamp(turnMeta.timestampDate) : '';
+            const supLine = supText ? `\n<sup>${supText}</sup>` : '';
+
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
                 userCount++;
                 const userText = parseNode(userQuery).trim();
-                markdown += `## User ${userCount}\n${demoteHeadings(userText)}\n\n`;
+                markdown += `## 👤 User ${userCount}${supLine}\n\n${demoteHeadings(userText)}\n\n`;
             }
 
             const modelResponse = turn.querySelector('.model-response-text') || turn.querySelector('.message-content');
             if (modelResponse) {
                 geminiCount++;
-                markdown += `## Gemini ${geminiCount}\n`;
+                const modelLabel = turnMeta ? (turnMeta.modelDisplay || turnMeta.modelId || '') : '';
+                const modelMeta = modelLabel ? ` (${modelLabel})` : '';
+                markdown += `## 🤖 Gemini ${geminiCount}${modelMeta}${supLine}\n\n`;
                 let responseText = '';
                 modelResponse.childNodes.forEach(node => {
                     responseText += parseNode(node);
@@ -774,9 +958,9 @@ tags:
         }
     }
 
-    function downloadMarkdown() {
+    function downloadMarkdown(metaResult = null) {
         const title = getTitle();
-        const markdownContent = extractContent();
+        const markdownContent = extractContent(metaResult);
         const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -798,11 +982,14 @@ tags:
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
 
         try {
+            let metaResult = null;
             if (!isSharePage) {
                 await autoScrollToTop(button);
+                button.innerText = '⏳ 讀取資訊...';
+                metaResult = await fetchConversationMetadata();
             }
             button.innerText = '✓ 下載中...';
-            downloadMarkdown();
+            downloadMarkdown(metaResult);
             button.innerText = '✓ 完成';
             setTimeout(() => {
                 button.innerText = 'MD';
