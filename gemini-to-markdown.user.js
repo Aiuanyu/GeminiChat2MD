@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.16.0
+// @version      0.16.1
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
@@ -9,6 +9,7 @@
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.16.1 2026-11-25 - Applied wrapInlineHtmlInCode only to message and Canvas bodies so per-turn <sup> timestamps are not wrapped in backticks.
 // @history      0.16.0 2026-11-25 - Added batchexecute (hNvQHb) metadata enrichment for per-turn UTC+8 timestamps, AI model metadata, and frontmatter created_at/updated_at/exported_at/model while preserving DOM and Canvas extraction.
 // @history      0.15.2 2026-11-02 - Fixed regular expression syntax error (unterminated group) in wrapInlineHtmlInCode for GreasyFork webhook sync.
 // @history      0.15.1 2026-11-02 - Supported blockquote (>) rendering in chat and Canvas; changed unordered list marker from * to - for Obsidian Markdown compatibility.
@@ -31,7 +32,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.16.0';
+    const SCRIPT_VERSION = '0.16.1';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
 
@@ -809,8 +810,8 @@ tags:
             const userQuery = turn.querySelector('user-query');
             if (userQuery) {
                 userCount++;
-                const userText = parseNode(userQuery).trim();
-                markdown += `## 👤 User ${userCount}${supLine}\n\n${demoteHeadings(userText)}\n\n`;
+                const userText = wrapInlineHtmlInCode(demoteHeadings(parseNode(userQuery).trim()));
+                markdown += `## 👤 User ${userCount}${supLine}\n\n${userText}\n\n`;
             }
 
             const modelResponse = turn.querySelector('.model-response-text') || turn.querySelector('.message-content');
@@ -823,7 +824,7 @@ tags:
                 modelResponse.childNodes.forEach(node => {
                     responseText += parseNode(node);
                 });
-                markdown += demoteHeadings(responseText.trim()) + '\n\n';
+                markdown += wrapInlineHtmlInCode(demoteHeadings(responseText.trim())) + '\n\n';
             }
         });
 
@@ -849,16 +850,14 @@ tags:
                     targetKeeper.contentEl.childNodes.forEach(node => {
                         canvasText += parseNode(node);
                     });
-                    markdown += demoteHeadings(canvasText.trim()) + '\n\n';
+                    markdown += wrapInlineHtmlInCode(demoteHeadings(canvasText.trim())) + '\n\n';
                 } else {
                     markdown += `（此 Canvas 於對話中未展開）\n\n`;
                 }
             }
         });
 
-        const formattedMarkdown = wrapInlineHtmlInCode(markdown);
-
-        return formattedMarkdown
+        return markdown
             .replace(/(?<!`)`\./g, '`\u3000.')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
