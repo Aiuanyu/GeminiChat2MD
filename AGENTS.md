@@ -10,6 +10,7 @@ This document provides guidance for AI agents working on this repository.
 ## Issue-to-Script Mapping
 If an issue title contains:
 - `[Gemini]`, modify `gemini-to-markdown.user.js`.
+- `[Google AI Mode]`, modify `google-ai-mode-to-markdown.user.js`.
 - `[Jules]`, modify `jules-to-markdown.user.js`.
 - `[Claude]`, modify `claude-to-markdown.user.js`.
 - `[Claude Code Web]`, modify `claude-code-web-to-markdown.user.js`.
