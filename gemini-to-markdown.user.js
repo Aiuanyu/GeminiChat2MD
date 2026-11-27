@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.17.0
-// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats and canvas content.
+// @version      0.18.0
+// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats, Canvas, and Deep Research reports.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
 // @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
 // @grant        none
 // @license      MIT
+// @history      0.18.0 2026-11-28 - Supported Gemini Deep Research reports (deep-research-immersive-panel, auto-expanding unopened report chips, filtering citation UI noise, and appending deep-research-source-lists).
 // @history      0.17.0 2026-11-27 - Automatically convert Obsidian note URLs (obsidian:// and file://.../Obsidian/<vault>/...) to [[wikilinks]] outside frontmatter and code blocks.
 // @history      0.16.1 2026-11-25 - Applied wrapInlineHtmlInCode only to message and Canvas bodies so per-turn <sup> timestamps are not wrapped in backticks.
 // @history      0.16.0 2026-11-25 - Added batchexecute (hNvQHb) metadata enrichment for per-turn UTC+8 timestamps, AI model metadata, and frontmatter created_at/updated_at/exported_at/model while preserving DOM and Canvas extraction.
@@ -33,7 +34,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.17.0';
+    const SCRIPT_VERSION = '0.18.0';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
 
@@ -419,6 +420,13 @@
             node.classList.contains('cdk-visually-hidden') ||
             node.classList.contains('screen-reader-user-query-label') ||
             node.classList.contains('screen-reader-model-response-label') ||
+            tag === 'source-footnote' ||
+            tag === 'sources-carousel-inline' ||
+            tag === 'sources-carousel' ||
+            tag === 'immersive-content-actions' ||
+            tag === 'deep-research-source-lists' ||
+            tag === 'thinking-panel' ||
+            tag === 'thinking-panel-skeleton-loader' ||
             (tag === 'h5' && /^(你說了|You said)/i.test(node.textContent.trim()))) {
             return '';
         }
@@ -622,7 +630,117 @@
         return parts.join('');
     }
 
-    function extractContent(metaResult = null) {
+    function getDeepResearchPanelTitle(panel) {
+        if (!panel) return '';
+        const titleEl = panel.querySelector('.toolbar .left-panel, .toolbar .title, .title-text, h1, h2');
+        if (!titleEl) return '';
+        const clone = titleEl.cloneNode(true);
+        clone.querySelectorAll('mat-icon, gem-icon, button').forEach(el => el.remove());
+        return clone.textContent.trim();
+    }
+
+    function extractDeepResearchSources(panel) {
+        if (!panel) return '';
+        const sourceList = panel.querySelector('deep-research-source-lists');
+        if (!sourceList) return '';
+
+        const seenUrls = new Set();
+        const items = [];
+        sourceList.querySelectorAll('a[href]').forEach(a => {
+            const href = a.href;
+            if (!href || !/^https?:\/\//i.test(href) || seenUrls.has(href)) return;
+            seenUrls.add(href);
+
+            const subTitleEl = a.querySelector('.sub-title');
+            const domainEl = a.querySelector('.display-name');
+            const domain = domainEl ? domainEl.textContent.trim() : '';
+
+            let label = subTitleEl ? subTitleEl.textContent.trim() : '';
+            if (!label) {
+                const clone = a.cloneNode(true);
+                clone.querySelectorAll('.display-name, .cdk-visually-hidden, img').forEach(el => el.remove());
+                label = clone.textContent.trim().replace(/\s+/g, ' ');
+            }
+            if (!label) label = domain || href;
+
+            const safeLabel = label.replace(/[\[\]\r\n]+/g, ' ').trim();
+            const domainNote = (domain && !safeLabel.includes(domain)) ? `（${domain}）` : '';
+            items.push(`${items.length + 1}. [${safeLabel}](${href})${domainNote}`);
+        });
+
+        if (items.length === 0) return '';
+        return `### 資料來源\n\n${items.join('\n')}`;
+    }
+
+    function extractOpenPanelSnapshot() {
+        const panel = document.querySelector('deep-research-immersive-panel, immersive-panel');
+        if (!panel) return null;
+
+        const contentEl = panel.querySelector('#extended-response-message-content, #extended-response-markdown-content, .ProseMirror, .immersive-editor');
+        if (!contentEl || !contentEl.textContent.trim()) return null;
+
+        const title = getDeepResearchPanelTitle(panel);
+        let bodyRaw = '';
+        contentEl.childNodes.forEach(node => {
+            bodyRaw += parseNode(node);
+        });
+        const bodyMd = wrapInlineHtmlInCode(demoteHeadings(bodyRaw.trim()));
+        const sourcesMd = extractDeepResearchSources(panel);
+        const markdown = sourcesMd ? `${bodyMd}\n\n${sourcesMd}` : bodyMd;
+
+        return {
+            title,
+            markdown,
+            signature: contentEl.textContent.trim().slice(0, 80) + ':' + contentEl.textContent.trim().length
+        };
+    }
+
+    async function collectDeepResearchPanels(button) {
+        const panelCache = new Map();
+        const initialSnap = extractOpenPanelSnapshot();
+        if (initialSnap && initialSnap.title && initialSnap.markdown) {
+            panelCache.set(initialSnap.title, initialSnap);
+        }
+
+        const cards = Array.from(document.querySelectorAll('.conversation-container immersive-entry-chip, .conversation-container gem-processing-card'));
+        for (const card of cards) {
+            if (card.closest('inline-preview, .inline-preview-container')) continue;
+            if (card.querySelector('inline-preview, .inline-preview-container')) continue;
+            if (card.tagName.toLowerCase() === 'gem-processing-card' && card.closest('immersive-entry-chip')) continue;
+
+            const titleEl = card.querySelector('.card-title, .title, h2');
+            const cardTitle = titleEl ? titleEl.textContent.trim() : '';
+            if (!cardTitle || panelCache.has(cardTitle)) continue;
+
+            const prevSnap = extractOpenPanelSnapshot();
+            const prevSig = prevSnap ? prevSnap.signature : '';
+
+            const clickTarget = card.querySelector('gem-processing-card, button, [role="button"]') || card;
+            if (typeof clickTarget.click !== 'function') continue;
+
+            if (button) {
+                button.innerText = '⏳ 載入報告...';
+            }
+            clickTarget.click();
+
+            for (let attempt = 0; attempt < 15; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+                const snap = extractOpenPanelSnapshot();
+                if (snap && snap.markdown && (snap.title === cardTitle || snap.signature !== prevSig)) {
+                    const key = snap.title || cardTitle;
+                    panelCache.set(key, snap);
+                    if (cardTitle && !panelCache.has(cardTitle)) {
+                        panelCache.set(cardTitle, snap);
+                    }
+                    break;
+                }
+            }
+        }
+
+        return panelCache;
+    }
+
+    function extractContent(metaResult = null, panelCache = null) {
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
         const title = cleanTitle(getTitle());
         const escapedTitle = title.replace(/"/g, '\\"');
@@ -737,10 +855,12 @@ tags:
                 if (titleEl) {
                     const title = titleEl.textContent.trim();
                     if (title && !results.some(r => r.title === title)) {
+                        const cached = panelCache && panelCache.get(title);
                         results.push({
                             title: title,
                             contentEl: null,
-                            hasFullContent: false
+                            cachedMarkdown: cached ? cached.markdown : '',
+                            hasFullContent: !!(cached && cached.markdown)
                         });
                     }
                 }
@@ -770,6 +890,7 @@ tags:
                     head,
                     tail,
                     contentEl: canvas.contentEl,
+                    cachedMarkdown: canvas.cachedMarkdown || '',
                     isDuplicate: false
                 });
             });
@@ -846,7 +967,9 @@ tags:
 
             if (targetKeeper) {
                 markdown += `---\n\n## ${targetKeeper.title}\n\n`;
-                if (targetKeeper.hasFullContent && targetKeeper.contentEl) {
+                if (targetKeeper.cachedMarkdown) {
+                    markdown += targetKeeper.cachedMarkdown + '\n\n';
+                } else if (targetKeeper.hasFullContent && targetKeeper.contentEl) {
                     let canvasText = '';
                     targetKeeper.contentEl.childNodes.forEach(node => {
                         canvasText += parseNode(node);
@@ -857,6 +980,16 @@ tags:
                 }
             }
         });
+
+        // Fallback: append any cached Deep Research panels not matched by turn chips
+        if (panelCache && panelCache.size > 0) {
+            panelCache.forEach((snap, key) => {
+                if (!titleGroups.has(key) && (!snap.title || !titleGroups.has(snap.title)) && snap.markdown) {
+                    const heading = snap.title || key || 'Deep Research 報告';
+                    markdown += `---\n\n## ${heading}\n\n${snap.markdown}\n\n`;
+                }
+            });
+        }
 
         const finalized = markdown
             .replace(/(?<!`)`\./g, '`\u3000.')
@@ -1118,9 +1251,9 @@ tags:
         }
     }
 
-    function downloadMarkdown(metaResult = null) {
+    function downloadMarkdown(metaResult = null, panelCache = null) {
         const title = getTitle();
-        const markdownContent = extractContent(metaResult);
+        const markdownContent = extractContent(metaResult, panelCache);
         const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -1143,13 +1276,15 @@ tags:
 
         try {
             let metaResult = null;
+            let panelCache = null;
             if (!isSharePage) {
                 await autoScrollToTop(button);
                 button.innerText = '⏳ 讀取資訊...';
                 metaResult = await fetchConversationMetadata();
+                panelCache = await collectDeepResearchPanels(button);
             }
             button.innerText = '✓ 下載中...';
-            downloadMarkdown(metaResult);
+            downloadMarkdown(metaResult, panelCache);
             button.innerText = '✓ 完成';
             setTimeout(() => {
                 button.innerText = 'MD';
