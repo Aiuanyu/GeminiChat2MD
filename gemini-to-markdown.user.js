@@ -1,15 +1,16 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.19.0
+// @version      0.19.1
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats, Canvas, Deep Research reports, and interactive web-preview charts.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
 // @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
 // @match        https://*.scf.usercontent.goog/gemini-code-immersive/*
-// @grant        none
+// @grant        GM_info
 // @license      MIT
+// @history      0.19.1 2026-11-28 - Switched from @grant none to @grant GM_info so Tampermonkey runs in its isolated sandbox and bypasses strict CSP in scf.usercontent.goog preview iframes.
 // @history      0.19.0 2026-11-28 - Supported exporting Gemini web-preview charts/widgets from cross-origin scf.usercontent.goog iframes as standalone HTML and PNG/SVG files with Obsidian embeds/links.
 // @history      0.18.0 2026-11-28 - Supported Gemini Deep Research reports (deep-research-immersive-panel, auto-expanding unopened report chips, filtering citation UI noise, and appending deep-research-source-lists).
 // @history      0.17.0 2026-11-27 - Automatically convert Obsidian note URLs (obsidian:// and file://.../Obsidian/<vault>/...) to [[wikilinks]] outside frontmatter and code blocks.
@@ -36,7 +37,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.19.0';
+    const SCRIPT_VERSION = '0.19.1';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
     let previewResultsMap = new Map();
