@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.19.1
+// @version      0.20.0
 // @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats, Canvas, Deep Research reports, and interactive web-preview charts.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
 // @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
-// @match        https://*.scf.usercontent.goog/gemini-code-immersive/*
-// @grant        GM_info
+// @grant        none
 // @license      MIT
+// @history      0.20.0 2026-11-28 - Extracted interactive web-preview chart HTML and SVG directly from batchexecute (hNvQHb) responses instead of cross-origin iframe messaging, ensuring 100% reliability across browsers.
 // @history      0.19.1 2026-11-28 - Switched from @grant none to @grant GM_info so Tampermonkey runs in its isolated sandbox and bypasses strict CSP in scf.usercontent.goog preview iframes.
 // @history      0.19.0 2026-11-28 - Supported exporting Gemini web-preview charts/widgets from cross-origin scf.usercontent.goog iframes as standalone HTML and PNG/SVG files with Obsidian embeds/links.
 // @history      0.18.0 2026-11-28 - Supported Gemini Deep Research reports (deep-research-immersive-panel, auto-expanding unopened report chips, filtering citation UI noise, and appending deep-research-source-lists).
@@ -37,80 +37,11 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.19.1';
+    const SCRIPT_VERSION = '0.20.0';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
-    let previewResultsMap = new Map();
-
-    // Cross-origin iframe handler for Gemini interactive web-preview charts
-    if (window.location.hostname.endsWith('.scf.usercontent.goog')) {
-        window.addEventListener('message', (event) => {
-            if (!event.data || event.data.type !== 'GEMINI_MD_EXTRACT_PREVIEW') return;
-            const requestId = event.data.requestId;
-            try {
-                const titleEl = document.querySelector('h1, h2, h3, .title, [class*="title"]');
-                const chartTitle = (titleEl && titleEl.textContent.trim())
-                    || (document.title && document.title.trim())
-                    || '';
-
-                const canvasPngs = [];
-                const liveCanvases = Array.from(document.querySelectorAll('canvas'));
-                liveCanvases.forEach((canvas) => {
-                    try {
-                        if (canvas.width > 0 && canvas.height > 0) {
-                            canvasPngs.push(canvas.toDataURL('image/png'));
-                        } else {
-                            canvasPngs.push('');
-                        }
-                    } catch (e) {
-                        canvasPngs.push('');
-                    }
-                });
-
-                const svgs = [];
-                document.querySelectorAll('svg').forEach((svg) => {
-                    const rect = svg.getBoundingClientRect();
-                    if (rect.width >= 120 && rect.height >= 80) {
-                        const svgClone = svg.cloneNode(true);
-                        if (!svgClone.getAttribute('xmlns')) {
-                            svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-                        }
-                        svgs.push(new XMLSerializer().serializeToString(svgClone));
-                    }
-                });
-
-                const docClone = document.documentElement.cloneNode(true);
-                const clonedCanvases = Array.from(docClone.querySelectorAll('canvas'));
-                clonedCanvases.forEach((cEl, idx) => {
-                    const pngUrl = canvasPngs[idx];
-                    if (pngUrl) {
-                        const img = document.createElement('img');
-                        img.src = pngUrl;
-                        img.style.maxWidth = '100%';
-                        img.style.height = 'auto';
-                        cEl.replaceWith(img);
-                    }
-                });
-                const html = '<!DOCTYPE html>\n' + docClone.outerHTML;
-
-                event.source.postMessage({
-                    type: 'GEMINI_MD_PREVIEW_RESULT',
-                    requestId,
-                    chartTitle,
-                    html,
-                    canvasPngs: canvasPngs.filter(Boolean),
-                    svgs
-                }, event.origin);
-            } catch (err) {
-                event.source.postMessage({
-                    type: 'GEMINI_MD_PREVIEW_RESULT',
-                    requestId,
-                    error: String(err)
-                }, event.origin);
-            }
-        });
-        return;
-    }
+    let extractedWebPreviews = [];
+    let webPreviewCursor = 0;
 
     function formatUtc8Timestamp(input) {
         if (!input) return '';
@@ -179,11 +110,59 @@
         const convKey = chatId.startsWith('c_') ? chatId : `c_${chatId}`;
 
         const turnMetaMap = new Map();
+        const webPreviews = [];
+        const seenHtmlSet = new Set();
         let earliestDate = null;
         let latestDate = null;
         let latestModel = '';
         let cursor = null;
         const seenCursors = new Set();
+
+        function extractSvgsFromHtml(htmlText) {
+            const svgs = [];
+            try {
+                const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+                doc.querySelectorAll('svg').forEach((svg) => {
+                    const serialized = new XMLSerializer().serializeToString(svg);
+                    if (serialized.length < 500) return;
+                    if (!svg.getAttribute('xmlns')) {
+                        svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                    }
+                    svgs.push(new XMLSerializer().serializeToString(svg));
+                });
+            } catch (e) {}
+            return svgs;
+        }
+
+        function collectHtmlDocsFromTurn(turnNode, outList) {
+            if (!turnNode) return;
+            if (typeof turnNode === 'string') {
+                if (turnNode.length > 300 && (turnNode.includes('<!DOCTYPE html') || turnNode.includes('<html'))) {
+                    const normalized = turnNode.trim();
+                    if (!seenHtmlSet.has(normalized)) {
+                        seenHtmlSet.add(normalized);
+                        const titleMatch = normalized.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+                        const chartTitle = titleMatch ? titleMatch[1].trim() : '';
+                        const svgs = extractSvgsFromHtml(normalized);
+                        outList.push({
+                            chartTitle,
+                            html: normalized,
+                            svgs
+                        });
+                    }
+                }
+                return;
+            }
+            if (Array.isArray(turnNode)) {
+                for (let i = 0; i < turnNode.length; i++) {
+                    collectHtmlDocsFromTurn(turnNode[i], outList);
+                }
+            } else if (typeof turnNode === 'object') {
+                for (const k of Object.keys(turnNode)) {
+                    collectHtmlDocsFromTurn(turnNode[k], outList);
+                }
+            }
+        }
 
         try {
             for (let page = 0; page < 50; page++) {
@@ -246,6 +225,12 @@
                         });
                     }
 
+                    const turnHtmlDocs = [];
+                    collectHtmlDocsFromTurn(t, turnHtmlDocs);
+                    if (turnHtmlDocs.length > 0) {
+                        webPreviews.unshift(...turnHtmlDocs);
+                    }
+
                     if (!latestModel && (modelDisplay || modelId)) {
                         latestModel = modelDisplay || modelId;
                     }
@@ -268,7 +253,8 @@
             turnMetaMap,
             createdAt: earliestDate,
             updatedAt: latestDate,
-            sessionModel: latestModel
+            sessionModel: latestModel,
+            webPreviews
         };
     }
 
@@ -490,21 +476,22 @@
         }
 
         if (tag === 'web-preview') {
-            const iframe = node.querySelector('iframe');
-            const key = iframe ? (iframe.src || iframe.getAttribute('data-tc-id') || '') : '';
-            const preview = key ? previewResultsMap.get(key) : null;
+            const preview = extractedWebPreviews[webPreviewCursor];
             if (preview) {
+                webPreviewCursor++;
                 const lines = [];
-                if (preview.images && preview.images.length > 0) {
-                    preview.images.forEach(img => {
-                        lines.push(`![[${img.filename}]]`);
+                if (preview.svgs && preview.svgs.length > 0) {
+                    preview.svgs.forEach((svgText, idx) => {
+                        const suffix = preview.svgs.length > 1 ? `-${idx + 1}` : '';
+                        const svgFilename = `${preview.fileStem}${suffix}.svg`;
+                        lines.push(`![[${svgFilename}]]`);
                     });
                 }
                 const label = preview.chartTitle ? `互動圖表：${preview.chartTitle}` : `互動圖表 ${preview.index}`;
                 lines.push(`[[${preview.htmlFilename}|📊 ${label}]]`);
                 return `\n\n${lines.join('\n')}\n\n`;
             }
-            return `\n\n> [互動圖表（無法跨框擷取）]\n\n`;
+            return `\n\n> [互動圖表（無法擷取）]\n\n`;
         }
 
         if (node.classList.contains('inline-preview-container') ||
@@ -764,90 +751,12 @@
         return `### 資料來源\n\n${items.join('\n')}`;
     }
 
-    async function collectWebPreviews(rootEl = document) {
-        const iframes = Array.from(rootEl.querySelectorAll('web-preview iframe'));
-        if (iframes.length === 0) return;
-
-        const baseTitle = sanitizeFilename(getTitle());
-        for (const iframe of iframes) {
-            const key = iframe.src || iframe.getAttribute('data-tc-id') || '';
-            if (!key || previewResultsMap.has(key)) continue;
-            if (!iframe.contentWindow) continue;
-
-            const requestId = `gem_prev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const result = await new Promise((resolve) => {
-                let done = false;
-                const timer = setTimeout(() => {
-                    if (!done) {
-                        done = true;
-                        window.removeEventListener('message', onMsg);
-                        resolve(null);
-                    }
-                }, 1500);
-
-                function onMsg(event) {
-                    if (!event.data || event.data.type !== 'GEMINI_MD_PREVIEW_RESULT') return;
-                    if (event.data.requestId !== requestId) return;
-                    if (!done) {
-                        done = true;
-                        clearTimeout(timer);
-                        window.removeEventListener('message', onMsg);
-                        resolve(event.data);
-                    }
-                }
-                window.addEventListener('message', onMsg);
-                try {
-                    iframe.contentWindow.postMessage({ type: 'GEMINI_MD_EXTRACT_PREVIEW', requestId }, '*');
-                } catch (e) {
-                    clearTimeout(timer);
-                    window.removeEventListener('message', onMsg);
-                    resolve(null);
-                }
-            });
-
-            if (result && !result.error && result.html) {
-                const index = previewResultsMap.size + 1;
-                const fileStem = `${baseTitle}-chart-${index}`;
-                const images = [];
-                if (Array.isArray(result.canvasPngs)) {
-                    result.canvasPngs.forEach((dataUrl, i) => {
-                        const suffix = result.canvasPngs.length > 1 ? `-${i + 1}` : '';
-                        images.push({
-                            filename: `${fileStem}${suffix}.png`,
-                            type: 'dataUrl',
-                            data: dataUrl
-                        });
-                    });
-                }
-                if (images.length === 0 && Array.isArray(result.svgs)) {
-                    result.svgs.forEach((svgText, i) => {
-                        const suffix = result.svgs.length > 1 ? `-${i + 1}` : '';
-                        images.push({
-                            filename: `${fileStem}${suffix}.svg`,
-                            type: 'svg',
-                            data: svgText
-                        });
-                    });
-                }
-                previewResultsMap.set(key, {
-                    index,
-                    chartTitle: result.chartTitle || '',
-                    htmlFilename: `${fileStem}.html`,
-                    html: result.html,
-                    images
-                });
-            }
-        }
-    }
-
     async function extractOpenPanelSnapshot() {
         const panel = document.querySelector('deep-research-immersive-panel, immersive-panel');
         if (!panel) return null;
 
         const contentEl = panel.querySelector('#extended-response-message-content, #extended-response-markdown-content, .ProseMirror, .immersive-editor');
         if (!contentEl || !contentEl.textContent.trim()) return null;
-
-        await collectWebPreviews(panel);
 
         const title = getDeepResearchPanelTitle(panel);
         let bodyRaw = '';
@@ -1441,16 +1350,13 @@ tags:
         const markdownContent = extractContent(metaResult, panelCache);
         triggerBlobDownload(new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' }), `${sanitizeFilename(title)}.md`);
 
-        for (const preview of previewResultsMap.values()) {
+        for (const preview of extractedWebPreviews) {
             await new Promise(resolve => setTimeout(resolve, 150));
             triggerBlobDownload(new Blob([preview.html], { type: 'text/html;charset=utf-8' }), preview.htmlFilename);
-            for (const img of (preview.images || [])) {
+            for (let i = 0; i < (preview.svgs || []).length; i++) {
                 await new Promise(resolve => setTimeout(resolve, 150));
-                if (img.type === 'dataUrl') {
-                    triggerDownloadUrl(img.data, img.filename);
-                } else if (img.type === 'svg') {
-                    triggerBlobDownload(new Blob([img.data], { type: 'image/svg+xml;charset=utf-8' }), img.filename);
-                }
+                const suffix = preview.svgs.length > 1 ? `-${i + 1}` : '';
+                triggerBlobDownload(new Blob([preview.svgs[i]], { type: 'image/svg+xml;charset=utf-8' }), `${preview.fileStem}${suffix}.svg`);
             }
         }
     }
@@ -1461,7 +1367,8 @@ tags:
         if (isExporting) return;
         isExporting = true;
         button.disabled = true;
-        previewResultsMap.clear();
+        extractedWebPreviews = [];
+        webPreviewCursor = 0;
 
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
 
@@ -1472,7 +1379,21 @@ tags:
                 await autoScrollToTop(button);
                 button.innerText = '⏳ 讀取資訊...';
                 metaResult = await fetchConversationMetadata();
-                await collectWebPreviews(document);
+                if (metaResult && Array.isArray(metaResult.webPreviews)) {
+                    const baseTitle = sanitizeFilename(getTitle());
+                    extractedWebPreviews = metaResult.webPreviews.map((p, idx) => {
+                        const index = idx + 1;
+                        const fileStem = `${baseTitle}-chart-${index}`;
+                        return {
+                            index,
+                            fileStem,
+                            htmlFilename: `${fileStem}.html`,
+                            chartTitle: p.chartTitle || '',
+                            html: p.html,
+                            svgs: p.svgs || []
+                        };
+                    });
+                }
                 panelCache = await collectDeepResearchPanels(button);
             }
             button.innerText = '✓ 下載中...';
