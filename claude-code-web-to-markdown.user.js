@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Claude Code Web to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.4.2
+// @version      0.5.0
 // @description  Converts a Claude Code Web chat conversation into a Markdown file.
 // @author       Aiuanyu
 // @match        https://claude.ai/code/*
 // @grant        none
 // @license      MIT
+// @history      0.5.0 2026-11-27 - Automatically convert Obsidian note URLs (obsidian:// and file://.../Obsidian/<vault>/...) to [[wikilinks]] outside frontmatter and code blocks.
 // @history      0.4.2 2026-11-22 - Switched <agent-message> subagent reports from <details> to Obsidian foldable callout (> [!info]-) to prevent unclosed block breakage in Obsidian Live Preview.
 // @history      0.4.1 2026-11-22 - Ignored <synthetic> model tag in assistant headings to prevent Obsidian Live Preview breakage, and formatted synthetic system notices as warning blockquotes.
 // @history      0.4.0 2026-11-21 - Fixed 50-page (5000-event) truncation limit; isolated subagent events via parent_tool_use_id with tool-use stats; parsed <agent-message> and <task-notification> into collapsible details/blockquotes instead of fake User turns.
@@ -19,7 +20,7 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.4.2';
+    const SCRIPT_VERSION = '0.5.0';
 
     function addStyles() {
         if (document.getElementById('claude-code-web-to-md-styles')) return;
@@ -675,6 +676,165 @@ tags:
             .trim();
     }
 
+    function obsUrlToWikilink(rawUrl, label = null) {
+        if (!rawUrl || (!rawUrl.startsWith('file://') && !rawUrl.startsWith('obsidian://'))) {
+            return null;
+        }
+
+        let rel = '';
+        let frag = '';
+
+        if (rawUrl.startsWith('file://')) {
+            let parsed;
+            try {
+                parsed = new URL(rawUrl);
+            } catch {
+                return null;
+            }
+            if (parsed.hostname && parsed.hostname !== 'localhost') return null;
+            let decodedPath;
+            try {
+                decodedPath = decodeURIComponent(parsed.pathname || '');
+            } catch {
+                return null;
+            }
+            if (!decodedPath || decodedPath.endsWith('/')) return null;
+            const vaultMatch = decodedPath.match(/\/obsidian\/[^/]+\/(.+)$/i);
+            if (!vaultMatch) return null;
+            rel = vaultMatch[1].replace(/^\/+/, '');
+            if (!rel || rel.startsWith('.obsidian/')) return null;
+            if (parsed.hash && parsed.hash.length > 1) {
+                try {
+                    frag = decodeURIComponent(parsed.hash.slice(1));
+                } catch {
+                    frag = parsed.hash.slice(1);
+                }
+            }
+        } else {
+            const rest = rawUrl.slice('obsidian://'.length);
+            const hashIdx = rest.indexOf('#');
+            const beforeHash = hashIdx >= 0 ? rest.slice(0, hashIdx) : rest;
+            const rawFrag = hashIdx >= 0 ? rest.slice(hashIdx + 1) : '';
+            const qIdx = beforeHash.indexOf('?');
+            if (qIdx < 0) return null;
+            const action = beforeHash.slice(0, qIdx).replace(/^\/+|\/+$/g, '').toLowerCase();
+            if (action !== 'open' && action !== 'adv-uri') return null;
+            const params = new URLSearchParams(beforeHash.slice(qIdx + 1));
+            const fileParam = params.get('file') || params.get('filepath') || '';
+            rel = fileParam.replace(/^\/+|\/+$/g, '');
+            if (!rel || rel.startsWith('.obsidian/')) return null;
+            if (rawFrag) {
+                try {
+                    frag = decodeURIComponent(rawFrag);
+                } catch {
+                    frag = rawFrag;
+                }
+            }
+        }
+
+        const target = rel.toLowerCase().endsWith('.md') ? rel.slice(0, -3) : rel;
+        const fragPart = (frag && !/^L\d+(?:-L?\d+)?$/.test(frag)) ? `#${frag}` : '';
+        if (label === null) return `[[${target}${fragPart}]]`;
+
+        const cleanLabel = label.trim();
+        if (!cleanLabel) return `[[${target}${fragPart}]]`;
+
+        const fileName = rel.split('/').pop() || rel;
+        const dotIdx = fileName.lastIndexOf('.');
+        const stem = (dotIdx > 0 && fileName.toLowerCase().endsWith('.md')) ? fileName.slice(0, dotIdx) : fileName;
+        if (cleanLabel === fileName || cleanLabel === stem || cleanLabel === rel || cleanLabel === target) {
+            return `[[${target}${fragPart}]]`;
+        }
+        return `[[${target}${fragPart}|${cleanLabel}]]`;
+    }
+
+    function convertObsidianLinksInParagraph(para) {
+        if (!para.includes('file://') && !para.includes('obsidian://')) return para;
+        const scanRe = /\\[^\n]|(?<!`)(`+)(?!`)([\s\S]*?)(?<!`)\1(?!`)|\[([^\[\]\n]*)\]\((?:<([^>\n]+)>|((?:[^()\s\n]|\([^()\s\n]*\))+))\)|<((?:file|obsidian):\/\/[^\s<>]+)>|((?:file|obsidian):\/\/[^\s<>\[\]()]+)/g;
+        const trailingPunctRe = /[.,;:!?。，、；：）」』】]+$/;
+        return para.replace(scanRe, (full, codeTicks, _codeBody, mdLabel, angleLink, plainLink, autoUrl, bareUrl) => {
+            if (codeTicks !== undefined) return full;
+            if (mdLabel !== undefined) {
+                const url = angleLink !== undefined ? angleLink : plainLink;
+                const converted = obsUrlToWikilink(url, mdLabel);
+                return converted !== null ? converted : full;
+            }
+            if (autoUrl !== undefined) {
+                const converted = obsUrlToWikilink(autoUrl);
+                return converted !== null ? converted : full;
+            }
+            if (bareUrl !== undefined) {
+                const punctMatch = bareUrl.match(trailingPunctRe);
+                const suffix = punctMatch ? punctMatch[0] : '';
+                const stripped = suffix ? bareUrl.slice(0, -suffix.length) : bareUrl;
+                const converted = obsUrlToWikilink(stripped);
+                return converted !== null ? (converted + suffix) : full;
+            }
+            return full;
+        });
+    }
+
+    function convertObsidianLinks(markdown) {
+        if (!markdown || (!markdown.includes('file://') && !markdown.includes('obsidian://'))) {
+            return markdown;
+        }
+        let prefix = '';
+        let body = markdown;
+        const fmMatch = markdown.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n/);
+        if (fmMatch) {
+            prefix = fmMatch[0];
+            body = markdown.slice(prefix.length);
+        }
+
+        const lines = body.split(/(\r?\n)/);
+        const out = [];
+        let plainBuf = [];
+        let fenceChar = '';
+        let fenceLen = 0;
+
+        const flushPlain = () => {
+            if (plainBuf.length === 0) return;
+            const chunk = plainBuf.join('');
+            plainBuf = [];
+            const parts = chunk.split(/(\n[ \t]*\n)/);
+            for (let i = 0; i < parts.length; i++) {
+                out.push(i % 2 === 0 && parts[i] ? convertObsidianLinksInParagraph(parts[i]) : parts[i]);
+            }
+        };
+
+        for (let i = 0; i < lines.length; i += 2) {
+            const lineBody = lines[i];
+            const nl = lines[i + 1] || '';
+            const fullLine = lineBody + nl;
+            if (fenceChar) {
+                out.push(fullLine);
+                const stripped = lineBody.replace(/^[ \t]+/, '');
+                const indent = lineBody.length - stripped.length;
+                const trimmed = stripped.replace(/[ \t]+$/, '');
+                if (indent <= 3 && trimmed.length >= fenceLen && [...trimmed].every(c => c === fenceChar)) {
+                    fenceChar = '';
+                    fenceLen = 0;
+                }
+                continue;
+            }
+            const fenceMatch = lineBody.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+            if (fenceMatch) {
+                const fence = fenceMatch[1];
+                const info = fenceMatch[2];
+                if (!(fence[0] === '`' && info.includes('`'))) {
+                    flushPlain();
+                    fenceChar = fence[0];
+                    fenceLen = fence.length;
+                    out.push(fullLine);
+                    continue;
+                }
+            }
+            plainBuf.push(fullLine);
+        }
+        flushPlain();
+        return prefix + out.join('');
+    }
+
     async function downloadMarkdown() {
         const button = document.querySelector('.download-markdown-button');
         const originalText = button ? button.innerText : 'MD';
@@ -702,6 +862,7 @@ tags:
             if (!markdownContent) {
                 markdownContent = extractContentFromDOM();
             }
+            markdownContent = convertObsidianLinks(markdownContent);
 
             const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
             const url = URL.createObjectURL(blob);
