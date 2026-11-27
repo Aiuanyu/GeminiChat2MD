@@ -1,14 +1,16 @@
 // ==UserScript==
 // @name         Gemini to Markdown
 // @namespace    https://github.com/Aiuanyu/GeminiChat2MD
-// @version      0.18.0
-// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats, Canvas, and Deep Research reports.
+// @version      0.19.0
+// @description  Converts a Gemini chat conversation into a Markdown file, including support for shared chats, Canvas, Deep Research reports, and interactive web-preview charts.
 // @author       Aiuanyu
 // @match        https://gemini.google.com/app/*
 // @match        https://gemini.google.com/gem/*
 // @match        https://gemini.google.com/share/*
+// @match        https://*.scf.usercontent.goog/gemini-code-immersive/*
 // @grant        none
 // @license      MIT
+// @history      0.19.0 2026-11-28 - Supported exporting Gemini web-preview charts/widgets from cross-origin scf.usercontent.goog iframes as standalone HTML and PNG/SVG files with Obsidian embeds/links.
 // @history      0.18.0 2026-11-28 - Supported Gemini Deep Research reports (deep-research-immersive-panel, auto-expanding unopened report chips, filtering citation UI noise, and appending deep-research-source-lists).
 // @history      0.17.0 2026-11-27 - Automatically convert Obsidian note URLs (obsidian:// and file://.../Obsidian/<vault>/...) to [[wikilinks]] outside frontmatter and code blocks.
 // @history      0.16.1 2026-11-25 - Applied wrapInlineHtmlInCode only to message and Canvas bodies so per-turn <sup> timestamps are not wrapped in backticks.
@@ -34,9 +36,80 @@
 (function() {
     'use strict';
 
-    const SCRIPT_VERSION = '0.18.0';
+    const SCRIPT_VERSION = '0.19.0';
     let latestCanvasMap = new Map();
     let currentTurnIndex = -1;
+    let previewResultsMap = new Map();
+
+    // Cross-origin iframe handler for Gemini interactive web-preview charts
+    if (window.location.hostname.endsWith('.scf.usercontent.goog')) {
+        window.addEventListener('message', (event) => {
+            if (!event.data || event.data.type !== 'GEMINI_MD_EXTRACT_PREVIEW') return;
+            const requestId = event.data.requestId;
+            try {
+                const titleEl = document.querySelector('h1, h2, h3, .title, [class*="title"]');
+                const chartTitle = (titleEl && titleEl.textContent.trim())
+                    || (document.title && document.title.trim())
+                    || '';
+
+                const canvasPngs = [];
+                const liveCanvases = Array.from(document.querySelectorAll('canvas'));
+                liveCanvases.forEach((canvas) => {
+                    try {
+                        if (canvas.width > 0 && canvas.height > 0) {
+                            canvasPngs.push(canvas.toDataURL('image/png'));
+                        } else {
+                            canvasPngs.push('');
+                        }
+                    } catch (e) {
+                        canvasPngs.push('');
+                    }
+                });
+
+                const svgs = [];
+                document.querySelectorAll('svg').forEach((svg) => {
+                    const rect = svg.getBoundingClientRect();
+                    if (rect.width >= 120 && rect.height >= 80) {
+                        const svgClone = svg.cloneNode(true);
+                        if (!svgClone.getAttribute('xmlns')) {
+                            svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                        }
+                        svgs.push(new XMLSerializer().serializeToString(svgClone));
+                    }
+                });
+
+                const docClone = document.documentElement.cloneNode(true);
+                const clonedCanvases = Array.from(docClone.querySelectorAll('canvas'));
+                clonedCanvases.forEach((cEl, idx) => {
+                    const pngUrl = canvasPngs[idx];
+                    if (pngUrl) {
+                        const img = document.createElement('img');
+                        img.src = pngUrl;
+                        img.style.maxWidth = '100%';
+                        img.style.height = 'auto';
+                        cEl.replaceWith(img);
+                    }
+                });
+                const html = '<!DOCTYPE html>\n' + docClone.outerHTML;
+
+                event.source.postMessage({
+                    type: 'GEMINI_MD_PREVIEW_RESULT',
+                    requestId,
+                    chartTitle,
+                    html,
+                    canvasPngs: canvasPngs.filter(Boolean),
+                    svgs
+                }, event.origin);
+            } catch (err) {
+                event.source.postMessage({
+                    type: 'GEMINI_MD_PREVIEW_RESULT',
+                    requestId,
+                    error: String(err)
+                }, event.origin);
+            }
+        });
+        return;
+    }
 
     function formatUtc8Timestamp(input) {
         if (!input) return '';
@@ -415,6 +488,24 @@
             return `\n\n[[#Canvas|${linkText}]]\n\n`;
         }
 
+        if (tag === 'web-preview') {
+            const iframe = node.querySelector('iframe');
+            const key = iframe ? (iframe.src || iframe.getAttribute('data-tc-id') || '') : '';
+            const preview = key ? previewResultsMap.get(key) : null;
+            if (preview) {
+                const lines = [];
+                if (preview.images && preview.images.length > 0) {
+                    preview.images.forEach(img => {
+                        lines.push(`![[${img.filename}]]`);
+                    });
+                }
+                const label = preview.chartTitle ? `互動圖表：${preview.chartTitle}` : `互動圖表 ${preview.index}`;
+                lines.push(`[[${preview.htmlFilename}|📊 ${label}]]`);
+                return `\n\n${lines.join('\n')}\n\n`;
+            }
+            return `\n\n> [互動圖表（無法跨框擷取）]\n\n`;
+        }
+
         if (node.classList.contains('inline-preview-container') ||
             node.classList.contains('table-footer') ||
             node.classList.contains('cdk-visually-hidden') ||
@@ -672,12 +763,90 @@
         return `### 資料來源\n\n${items.join('\n')}`;
     }
 
-    function extractOpenPanelSnapshot() {
+    async function collectWebPreviews(rootEl = document) {
+        const iframes = Array.from(rootEl.querySelectorAll('web-preview iframe'));
+        if (iframes.length === 0) return;
+
+        const baseTitle = sanitizeFilename(getTitle());
+        for (const iframe of iframes) {
+            const key = iframe.src || iframe.getAttribute('data-tc-id') || '';
+            if (!key || previewResultsMap.has(key)) continue;
+            if (!iframe.contentWindow) continue;
+
+            const requestId = `gem_prev_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const result = await new Promise((resolve) => {
+                let done = false;
+                const timer = setTimeout(() => {
+                    if (!done) {
+                        done = true;
+                        window.removeEventListener('message', onMsg);
+                        resolve(null);
+                    }
+                }, 1500);
+
+                function onMsg(event) {
+                    if (!event.data || event.data.type !== 'GEMINI_MD_PREVIEW_RESULT') return;
+                    if (event.data.requestId !== requestId) return;
+                    if (!done) {
+                        done = true;
+                        clearTimeout(timer);
+                        window.removeEventListener('message', onMsg);
+                        resolve(event.data);
+                    }
+                }
+                window.addEventListener('message', onMsg);
+                try {
+                    iframe.contentWindow.postMessage({ type: 'GEMINI_MD_EXTRACT_PREVIEW', requestId }, '*');
+                } catch (e) {
+                    clearTimeout(timer);
+                    window.removeEventListener('message', onMsg);
+                    resolve(null);
+                }
+            });
+
+            if (result && !result.error && result.html) {
+                const index = previewResultsMap.size + 1;
+                const fileStem = `${baseTitle}-chart-${index}`;
+                const images = [];
+                if (Array.isArray(result.canvasPngs)) {
+                    result.canvasPngs.forEach((dataUrl, i) => {
+                        const suffix = result.canvasPngs.length > 1 ? `-${i + 1}` : '';
+                        images.push({
+                            filename: `${fileStem}${suffix}.png`,
+                            type: 'dataUrl',
+                            data: dataUrl
+                        });
+                    });
+                }
+                if (images.length === 0 && Array.isArray(result.svgs)) {
+                    result.svgs.forEach((svgText, i) => {
+                        const suffix = result.svgs.length > 1 ? `-${i + 1}` : '';
+                        images.push({
+                            filename: `${fileStem}${suffix}.svg`,
+                            type: 'svg',
+                            data: svgText
+                        });
+                    });
+                }
+                previewResultsMap.set(key, {
+                    index,
+                    chartTitle: result.chartTitle || '',
+                    htmlFilename: `${fileStem}.html`,
+                    html: result.html,
+                    images
+                });
+            }
+        }
+    }
+
+    async function extractOpenPanelSnapshot() {
         const panel = document.querySelector('deep-research-immersive-panel, immersive-panel');
         if (!panel) return null;
 
         const contentEl = panel.querySelector('#extended-response-message-content, #extended-response-markdown-content, .ProseMirror, .immersive-editor');
         if (!contentEl || !contentEl.textContent.trim()) return null;
+
+        await collectWebPreviews(panel);
 
         const title = getDeepResearchPanelTitle(panel);
         let bodyRaw = '';
@@ -697,7 +866,7 @@
 
     async function collectDeepResearchPanels(button) {
         const panelCache = new Map();
-        const initialSnap = extractOpenPanelSnapshot();
+        const initialSnap = await extractOpenPanelSnapshot();
         if (initialSnap && initialSnap.title && initialSnap.markdown) {
             panelCache.set(initialSnap.title, initialSnap);
         }
@@ -712,7 +881,7 @@
             const cardTitle = titleEl ? titleEl.textContent.trim() : '';
             if (!cardTitle || panelCache.has(cardTitle)) continue;
 
-            const prevSnap = extractOpenPanelSnapshot();
+            const prevSnap = await extractOpenPanelSnapshot();
             const prevSig = prevSnap ? prevSnap.signature : '';
 
             const clickTarget = card.querySelector('gem-processing-card, button, [role="button"]') || card;
@@ -725,7 +894,7 @@
 
             for (let attempt = 0; attempt < 15; attempt++) {
                 await new Promise(resolve => setTimeout(resolve, 200));
-                const snap = extractOpenPanelSnapshot();
+                const snap = await extractOpenPanelSnapshot();
                 if (snap && snap.markdown && (snap.title === cardTitle || snap.signature !== prevSig)) {
                     const key = snap.title || cardTitle;
                     panelCache.set(key, snap);
@@ -1251,18 +1420,38 @@ tags:
         }
     }
 
-    function downloadMarkdown(metaResult = null, panelCache = null) {
-        const title = getTitle();
-        const markdownContent = extractContent(metaResult, panelCache);
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
+    function triggerDownloadUrl(url, filename) {
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${sanitizeFilename(title)}.md`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+    }
+
+    function triggerBlobDownload(blob, filename) {
+        const url = URL.createObjectURL(blob);
+        triggerDownloadUrl(url, filename);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    async function downloadMarkdown(metaResult = null, panelCache = null) {
+        const title = getTitle();
+        const markdownContent = extractContent(metaResult, panelCache);
+        triggerBlobDownload(new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' }), `${sanitizeFilename(title)}.md`);
+
+        for (const preview of previewResultsMap.values()) {
+            await new Promise(resolve => setTimeout(resolve, 150));
+            triggerBlobDownload(new Blob([preview.html], { type: 'text/html;charset=utf-8' }), preview.htmlFilename);
+            for (const img of (preview.images || [])) {
+                await new Promise(resolve => setTimeout(resolve, 150));
+                if (img.type === 'dataUrl') {
+                    triggerDownloadUrl(img.data, img.filename);
+                } else if (img.type === 'svg') {
+                    triggerBlobDownload(new Blob([img.data], { type: 'image/svg+xml;charset=utf-8' }), img.filename);
+                }
+            }
+        }
     }
 
     let isExporting = false;
@@ -1271,6 +1460,7 @@ tags:
         if (isExporting) return;
         isExporting = true;
         button.disabled = true;
+        previewResultsMap.clear();
 
         const isSharePage = window.location.pathname.startsWith('/share/') || window.location.pathname.includes('DOM.html') || decodeURIComponent(window.location.pathname).includes('分享');
 
@@ -1281,10 +1471,11 @@ tags:
                 await autoScrollToTop(button);
                 button.innerText = '⏳ 讀取資訊...';
                 metaResult = await fetchConversationMetadata();
+                await collectWebPreviews(document);
                 panelCache = await collectDeepResearchPanels(button);
             }
             button.innerText = '✓ 下載中...';
-            downloadMarkdown(metaResult, panelCache);
+            await downloadMarkdown(metaResult, panelCache);
             button.innerText = '✓ 完成';
             setTimeout(() => {
                 button.innerText = 'MD';
@@ -1294,7 +1485,7 @@ tags:
         } catch (err) {
             console.error('Gemini to Markdown export error:', err);
             button.innerText = '⚠️ 匯出中...';
-            downloadMarkdown();
+            await downloadMarkdown();
             setTimeout(() => {
                 button.innerText = 'MD';
                 button.disabled = false;
